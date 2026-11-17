@@ -1,0 +1,60 @@
+# Builds Sidekick.app and puts the zip on GitHub Releases.
+#   push tag v<version>  → checks the tag matches package.json, tests, builds, publishes the release
+#                          (a version with "-", like 0.2.0-beta.1, is marked prerelease)
+#   Run workflow (manual) → same build, the zip is attached to the run instead; nothing is published
+# Apple silicon only: the runner is arm64 and so are both compiled binaries.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Tag matches package.json
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(plutil -extract version raw -o - package.json)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag is $GITHUB_REF_NAME but package.json says $version; bump package.json in the release commit"
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
+      - name: Build Sidekick.app
+        run: make -C app zip
+
+      - name: Attach the zip to this run
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: app/build/Sidekick-v*.zip
+          archive: false
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "Sidekick $GITHUB_REF_NAME")
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${flags[@]}" --repo "$GITHUB_REPOSITORY" \
+            app/build/Sidekick-v*.zip app/build/Sidekick-v*.zip.sha256

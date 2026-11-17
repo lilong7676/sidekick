@@ -1,0 +1,6 @@
+#!/bin/sh
+# The slackcli sidekick depends on, pinned in package.json (bun install fetches it).
+# sidekick puts this directory first on PATH for the daemon and every agent run, so all of them
+# use the same version, whatever slackcli (if any) is installed on the machine.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$here/node_modules/.bin/slackcli" "$@"

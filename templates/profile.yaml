@@ -1,0 +1,48 @@
+# sidekick 的 profile：这个工作区里，sidekick 收什么、用什么模型、哪些命令绝不能跑。
+# 字段说明见 sidekick 仓库的 src/config.ts。模型、托管模式、轮询间隔、实时模式在 app 的设置里改，会覆盖这里。
+
+slack:
+  enabled: true
+  pollMinutes: 5
+  maxConversations: 10
+  contextMessages: 50
+
+# 每条私信、@ 你的消息，交给它处理：一个任务一个会话
+agent:
+  model: claude-opus-5-5
+  effort: medium
+  maxTurns: 40
+  concurrency: 2
+  timeoutMinutes: 30
+  skill: sidekick/slack.md
+
+# 在面板里手动派的活
+manual:
+  model: claude-opus-5-5
+  effort: medium
+  maxTurns: 60
+
+# 工具权限交给 Claude Code 的 auto 模式；这里只列绝不能跑的命令。
+# 回 Slack、加 reaction、读写账本由 sidekick 统一拦，不用写在这里。
+policy:
+  allow: []
+  ask: []
+  deny:
+    - "Bash(git push --force:*)"
+    - "Bash(git push -f:*)"
+    - "Bash(rm -rf:*)"
+    - "Bash(npm publish:*)"
+    - "Bash(gh auth:*)"
+    - "Bash(gh secret:*)"
+
+# 分身：你是谁、负责什么、怎么回话。每次运行都放进 agent 的系统提示，在 app 的「分身」页里改。
+persona:
+  - sidekick/me.md
+
+approvals:
+  waitMinutes: 5
+
+notify:
+  macos: true
+  # 有事要你处理时，在 Slack 里给你自己发一条私信，手机上也能看到
+  slackSelfDm: true

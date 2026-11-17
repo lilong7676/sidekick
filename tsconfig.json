@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "types": [
+      "bun-types"
+    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src",
+    "test",
+    "web"
+  ]
+}
