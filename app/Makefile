@@ -9,7 +9,7 @@ BUN       ?= $(shell command -v bun 2>/dev/null || echo $(HOME)/.bun/bin/bun)
 VERSION   := $(shell plutil -extract version raw -o - $(ROOT)/package.json)
 ZIP       := build/$(APP)-v$(VERSION).zip
 
-.PHONY: all build daemon bundle zip install uninstall run run-local stop clean
+.PHONY: all build daemon icon bundle zip install uninstall run run-local stop clean
 
 all: bundle
 
@@ -23,8 +23,15 @@ daemon:
 	cd $(ROOT) && $(BUN) build --compile src/cli.ts --outfile app/build/bin/sidekick
 	cd $(ROOT) && $(BUN) build --compile node_modules/slackcli/src/index.ts --outfile app/build/slackcli/slackcli
 
+# Resources/AppIcon.icns is committed. After editing Resources/AppIcon.svg, run make icon and commit both.
+icon:
+	rm -rf build/AppIcon.iconset
+	swift scripts/render-icon.swift Resources/AppIcon.svg build/AppIcon.iconset
+	iconutil -c icns build/AppIcon.iconset -o Resources/AppIcon.icns
+
 # Hand-assembled .app, ad-hoc signed (no developer identity on this machine):
 #   Contents/MacOS/SidekickBar                         the menu bar app
+#   Contents/Resources/AppIcon.icns                    Finder, notifications, Login Items
 #   Contents/Resources/bin/sidekick                    daemon + CLI
 #   Contents/Resources/slackcli/slackcli               on the agent's PATH; sidekick itself is not
 # On launch the app writes ~/Library/LaunchAgents/local.sidekick.daemon.plist pointing at its daemon and loads it.
@@ -35,6 +42,7 @@ bundle: build daemon
 	plutil -replace CFBundleShortVersionString -string "$(VERSION)" "$(BUNDLE)/Contents/Info.plist"
 	plutil -replace CFBundleVersion -string "$(VERSION)" "$(BUNDLE)/Contents/Info.plist"
 	cp "$(BUILDDIR)/$(BIN)" "$(BUNDLE)/Contents/MacOS/$(BIN)"
+	cp Resources/AppIcon.icns "$(BUNDLE)/Contents/Resources/AppIcon.icns"
 	cp build/bin/sidekick "$(BUNDLE)/Contents/Resources/bin/sidekick"
 	cp build/slackcli/slackcli "$(BUNDLE)/Contents/Resources/slackcli/slackcli"
 	codesign --force --sign - "$(BUNDLE)/Contents/Resources/bin/sidekick" "$(BUNDLE)/Contents/Resources/slackcli/slackcli"

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Apple's macOS icon grid: an 824×824 tile with 100 px of margin. The art is drawn on a 100-unit tile. -->
+  <g transform="translate(100 100) scale(8.24)">
+    <rect width="100" height="100" rx="22.5" fill="#D85A30"/>
+    <rect x="22" y="36" width="56" height="46" rx="21" fill="#FFFFFF"/>
+    <ellipse cx="40" cy="58" rx="4.5" ry="6.5" fill="#712B13"/>
+    <ellipse cx="60" cy="58" rx="4.5" ry="6.5" fill="#712B13"/>
+    <path d="M68 12 C69.2 20 71 21.8 79 23 C71 24.2 69.2 26 68 34 C66.8 26 65 24.2 57 23 C65 21.8 66.8 20 68 12 Z" fill="#FFFFFF"/>
+  </g>
+</svg>

@@ -50,7 +50,8 @@ src/
 web/                管理界面（Preact，Bun 打包，由 daemon 提供）
 templates/          profile.yaml、slack.md（处理 Slack 的通用流程）、me.md（分身）；首次设置时拷进工作区，不写任何公司信息
 app/                Swift 菜单栏 app，也是唯一的安装方式：make install 把编译好的 daemon 和 slackcli 一起装进 Sidekick.app（make zip 打发布包），
-                    app 把 daemon 装成 ~/Library/LaunchAgents 下的 LaunchAgent（DaemonService.swift）
+                    app 把 daemon 装成 ~/Library/LaunchAgents 下的 LaunchAgent（DaemonService.swift）；
+                    图标源文件是 Resources/AppIcon.svg，改完跑 make icon 重新生成 AppIcon.icns，两个都提交
 test/               bun test
 bin/slackcli        锁定版本的 slackcli 入口；daemon 和每次 agent 运行的 PATH 里排第一
 scripts/install.sh  一行安装 / 升级：curl 下载最新 Release、校验、替换 /Applications/Sidekick.app

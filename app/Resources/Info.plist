@@ -12,6 +12,9 @@
 	<string>SidekickBar</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Resources/AppIcon.icns, built from AppIcon.svg by make icon -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<!-- CFBundleShortVersionString / CFBundleVersion: written from package.json by the Makefile -->
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
