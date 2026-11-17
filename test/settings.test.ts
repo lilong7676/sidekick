@@ -13,7 +13,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), "sidekick-settings-"));
 
 describe("settings", () => {
   /** Defaults of the settings added later, part of every whole-object comparison below. */
-  const MERGE = { threadMergeHours: null, dmMergeHours: 2, continueIn: "terminal" as const, skipUsers: [], skipChannels: [], workHours: null, autoFull: null, signReplies: true };
+  const MERGE = { threadMergeHours: null, dmMergeHours: 2, continueIn: "terminal" as const, skipUsers: [], skipChannels: [], workHours: null, autoFull: null, signReplies: true, language: "auto" as const };
 
   test("defaults to semi when there is no file", async () => {
     expect(loadSettings(join(tmp(), "none.json"))).toEqual({ mode: "semi", realtime: false, ...MERGE });

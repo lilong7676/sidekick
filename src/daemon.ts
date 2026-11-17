@@ -15,7 +15,8 @@ import { Trials } from "./trial.ts";
 import { SlackLogin } from "./slacklogin.ts";
 import { checkForUpdate, type UpdateInfo } from "./update.ts";
 import type { RunHandle } from "./runner.ts";
-import { effectiveMode, loadSettings, timetableSwitch } from "./settings.ts";
+import { setLang, t } from "./i18n.ts";
+import { effectiveMode, loadSettings, timetableSwitch, uiLang } from "./settings.ts";
 import { cachedMe, collectSlack, dmSelf } from "./slack.ts";
 import { intakeSlack } from "./intake.ts";
 import { startTaskRun } from "./handle.ts";
@@ -77,6 +78,7 @@ export async function runSetup(reason: string): Promise<never> {
 }
 
 export async function runDaemon(profiles: Profile[], opts: DaemonOptions = {}): Promise<never> {
+  setLang(uiLang());
   const states = profiles.map((p) => {
     setLogDir(join(p.stateDir, "logs"));
     const db = openDb(p.stateDir);
@@ -124,7 +126,13 @@ export async function runDaemon(profiles: Profile[], opts: DaemonOptions = {}): 
         wake?.();
       }, 3_000);
     },
-    onFallback: (reason) => notifyLocal("sidekick：Slack 实时连接已回退到轮询", `${reason}。轮询照常，15 分钟后再试实时；面板 → 设置 → 诊断 有详情。`),
+    onFallback: (reason) => notifyLocal(
+      t("sidekick：Slack 实时连接已回退到轮询", "sidekick: Slack realtime fell back to polling"),
+      t(
+        `${reason}。轮询照常，15 分钟后再试实时；面板 → 设置 → 诊断 有详情。`,
+        `${reason}. Polling goes on, and realtime is tried again in 15 min. Details in the panel → Settings → Diagnostics.`,
+      ),
+    ),
   });
   const applyRealtime = () => realtime.update(slackOn(first.profile) && loadSettings().realtime);
 
@@ -140,7 +148,13 @@ export async function runDaemon(profiles: Profile[], opts: DaemonOptions = {}): 
   // Diagnosis: shortly after start, every 6 h, soon after a collect fails, and from the panel.
   const doctor = new AutoDoctor(
     () => runDoctor({ profile: first.profile, db: first.db, slack: slackStatus() }),
-    (bad) => notifyLocal("sidekick 诊断发现问题", `${bad.map((c) => c.name).join("、")}有问题。面板 → 设置 → 诊断 看怎么修。`),
+    (bad) => notifyLocal(
+      t("sidekick 诊断发现问题", "sidekick diagnostics found a problem"),
+      t(
+        `${bad.map((c) => c.name).join("、")}有问题。面板 → 设置 → 诊断 看怎么修。`,
+        `Problem with ${bad.map((c) => c.name).join(", ")}. See how to fix it in the panel → Settings → Diagnostics.`,
+      ),
+    ),
   );
 
   // Signing in to Slack from the panel: afterwards the cached account may be someone else's, a fallen-back
@@ -161,7 +175,7 @@ export async function runDaemon(profiles: Profile[], opts: DaemonOptions = {}): 
     slack: slackStatus,
     update: () => update,
     doctor,
-    onSettingsChanged: () => { applyRealtime(); wake?.(); },
+    onSettingsChanged: () => { setLang(uiLang()); applyRealtime(); wake?.(); },
     realtimeRetry: () => realtime.retryNow(),
     trials,
     slackLogin,
@@ -194,8 +208,17 @@ export async function runDaemon(profiles: Profile[], opts: DaemonOptions = {}): 
     if (!now) return;
     const until = now.until ? new Date(now.until).toTimeString().slice(0, 5) : "";
     const [title, body] = now.mode === "full"
-      ? ["sidekick：已切到全托管", `按时间表，到 ${until}。这段时间起草的回复会直接以你的名义发出，每条都私信你一份。`]
-      : ["sidekick：已切回半托管", "全托管时段结束，之后的回复都要你批。"];
+      ? [
+          t("sidekick：已切到全托管", "sidekick: switched to Full auto"),
+          t(
+            `按时间表，到 ${until}。这段时间起草的回复会直接以你的名义发出，每条都私信你一份。`,
+            `On schedule, until ${until}. Replies drafted until then go out in your name directly, and you get a copy of each in a Slack DM.`,
+          ),
+        ]
+      : [
+          t("sidekick：已切回半托管", "sidekick: back to Approve first"),
+          t("全托管时段结束，之后的回复都要你批。", "The Full auto time window has ended; replies need your approval again."),
+        ];
     log(`mode: ${now.mode} by timetable`);
     if (s.notifyMacos ?? first.profile.notify.macos) notifyLocal(title, body);
     if (!opts.noSlack && (s.notifySlackDm ?? first.profile.notify.slackSelfDm)) {
@@ -208,6 +231,7 @@ export async function runDaemon(profiles: Profile[], opts: DaemonOptions = {}): 
   let updateCheckedAt = 0;
 
   for (;;) {
+    setLang(uiLang()); // a hand-edited settings.json takes effect on the next tick
     await announceMode();
     if (Date.now() - updateCheckedAt > 6 * 3_600_000) {
       updateCheckedAt = Date.now();

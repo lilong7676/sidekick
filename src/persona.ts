@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname, join, normalize } from "node:path";
 import template from "../templates/me.md" with { type: "text" };
 import type { Profile } from "./config.ts";
+import { t } from "./i18n.ts";
 import { clip } from "./util.ts";
 
 export const PERSONA_TEMPLATE: string = template;
@@ -34,7 +35,7 @@ export function isSafeRelative(rel: string): boolean {
 }
 
 function resolve(profile: Pick<Profile, "root" | "persona">, rel: string): string {
-  if (!profile.persona.includes(rel) || !isSafeRelative(rel)) throw new Error(`${rel} 不是这个 profile 的分身文件`);
+  if (!profile.persona.includes(rel) || !isSafeRelative(rel)) throw new Error(t(`${rel} 不是这个 profile 的分身文件`, `${rel} is not a persona file of this profile`));
   return join(profile.root, normalize(rel));
 }
 
@@ -52,9 +53,9 @@ export function readPersona(profile: Pick<Profile, "root" | "persona">): Persona
  */
 export function writePersona(profile: Pick<Profile, "root" | "persona">, rel: string, content: string, baseMtime: number | null): PersonaFile {
   const abs = resolve(profile, rel);
-  if (content.length > MAX_PERSONA_CHARS) throw new Error(`分身文件超过 ${MAX_PERSONA_CHARS} 个字符`);
+  if (content.length > MAX_PERSONA_CHARS) throw new Error(t(`分身文件超过 ${MAX_PERSONA_CHARS} 个字符`, `The persona file is longer than ${MAX_PERSONA_CHARS} characters`));
   const current = existsSync(abs) ? statSync(abs).mtimeMs : null;
-  if (current !== baseMtime) throw new PersonaConflict(`${rel} 在别处改过了，先重新加载再改`);
+  if (current !== baseMtime) throw new PersonaConflict(t(`${rel} 在别处改过了，先重新加载再改`, `${rel} was changed elsewhere; reload it before editing`));
   mkdirSync(dirname(abs), { recursive: true });
   writeFileSync(abs, content);
   return { path: rel, exists: true, content, mtime: statSync(abs).mtimeMs };

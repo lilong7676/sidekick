@@ -49,28 +49,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makePanel(size: NSSize) -> WebPanel {
         WebPanel(client: client, size: size,
                  onBadgeRefresh: { [weak self] in self?.refresh() },
-                 onOpenWindow: { [weak self] in self?.openWindow() })
+                 onOpenWindow: { [weak self] in self?.openWindow() },
+                 onLanguage: { [weak self] in self?.apply(lang: $0) })
+    }
+
+    /// The language the daemon resolved. When it changes, rebuild what was built once in the old one:
+    /// the main menu (shown while the window is open) and the notification buttons. The right-click
+    /// menu, the tooltip and each notification are built when used, so they follow on their own.
+    private func apply(lang: String?) {
+        guard UILang.update(from: lang) else { return }
+        NSApp.mainMenu = Self.mainMenu()
+        notifier.registerCategories()
     }
 
     private static func mainMenu() -> NSMenu {
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        appMenu.addItem(withTitle: "退出 Sidekick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L("关闭窗口", "Close window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        appMenu.addItem(withTitle: L("退出 Sidekick", "Quit Sidekick"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let editItem = NSMenuItem()
-        let edit = NSMenu(title: "编辑")
-        edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        let edit = NSMenu(title: L("编辑", "Edit"))
+        edit.addItem(withTitle: L("撤销", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: L("重做", "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         edit.addItem(.separator())
-        edit.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        edit.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: L("剪切", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("拷贝", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("粘贴", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L("全选", "Select all"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
         main.addItem(editItem)
         return main
@@ -108,16 +118,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func showMenu() {
         let menu = NSMenu()
-        menu.addItem(withTitle: "打开窗口", action: #selector(openWindow), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "重新加载", action: #selector(reloadAll), keyEquivalent: "r").target = self
-        menu.addItem(withTitle: "重启 daemon", action: #selector(restartDaemon), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("打开窗口", "Open window"), action: #selector(openWindow), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("重新加载", "Reload"), action: #selector(reloadAll), keyEquivalent: "r").target = self
+        menu.addItem(withTitle: L("重启 daemon", "Restart daemon"), action: #selector(restartDaemon), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        let login = NSMenuItem(title: "开机自动启动", action: #selector(toggleLogin), keyEquivalent: "")
+        let login = NSMenuItem(title: L("开机自动启动", "Launch at login"), action: #selector(toggleLogin), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "退出 Sidekick", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: L("退出 Sidekick", "Quit Sidekick"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil // keep left click for the panel
@@ -167,8 +177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.refresh() }
         } else {
             let alert = NSAlert()
-            alert.messageText = "重启 daemon 失败"
-            alert.informativeText = "daemon 状态：\(DaemonService.statusText)。"
+            alert.messageText = L("重启 daemon 失败", "Couldn't restart the daemon")
+            alert.informativeText = L("daemon 状态：\(DaemonService.statusText)。", "Daemon status: \(DaemonService.statusText).")
             alert.runModal()
         }
     }
@@ -182,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         } catch {
             let alert = NSAlert()
-            alert.messageText = "设置开机启动失败"
+            alert.messageText = L("设置开机启动失败", "Couldn't change Launch at login")
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }
@@ -200,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             do {
                 let state = try await client.state()
+                await MainActor.run { self.apply(lang: state.lang) }
                 let approvals = try await client.approvals()
                 let tasks = try await client.attentionTasks()
                 await MainActor.run {
@@ -216,6 +227,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let button = statusItem.button else { return }
         button.title = count > 0 ? " \(count)" : ""
         button.appearsDisabled = !online
-        button.toolTip = online ? (count > 0 ? "\(count) 件事要你处理" : "sidekick") : "连不上 sidekick daemon"
+        button.toolTip = !online ? L("连不上 sidekick daemon", "Can't reach the sidekick daemon")
+            : count == 0 ? "sidekick"
+            : L("\(count) 件事要你处理", count == 1 ? "1 thing needs you" : "\(count) things need you")
     }
 }

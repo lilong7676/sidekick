@@ -2,6 +2,7 @@
 
 import type { Database } from "bun:sqlite";
 import { getTask, setTaskStatus, type ApprovalRow } from "./db.ts";
+import { t } from "./i18n.ts";
 import { deleteDraft, liveDraftIds, myMessageSince, sendDraft, sendMessage } from "./slack.ts";
 import { log } from "./util.ts";
 
@@ -139,7 +140,7 @@ export async function processDecisions(
           }
         } catch (e) {
           db.prepare("UPDATE approvals SET status = 'failed', result = ? WHERE id = ?").run(`failed: ${String(e).slice(0, 300)}`, a.id);
-          if (task) setTaskStatus(db, a.task_id, "needs_me", { summary: `回复发送失败：${String(e).slice(0, 200)}` });
+          if (task) setTaskStatus(db, a.task_id, "needs_me", { summary: t(`回复发送失败：${String(e).slice(0, 200)}`, `The reply could not be sent: ${String(e).slice(0, 200)}`) });
           log(`approvals: ${a.id} send failed: ${String(e).slice(0, 200)}`);
         }
       } else {

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import type { EventRow, TaskRow } from "./db.ts";
 import { launchSpec, slackTaskPrompt } from "./handle.ts";
+import { t } from "./i18n.ts";
 import { startRun, type RunHandle } from "./runner.ts";
 import { loadSettings } from "./settings.ts";
 import { fetchContext, permalink, whoami } from "./slack.ts";
@@ -34,7 +35,8 @@ export function trialSamples(db: Database, limit = 20): TrialSample[] {
   const rows = db.prepare(`SELECT id, kind, channel_name, user_name, text, received_at FROM events
     WHERE source = 'slack' AND text IS NOT NULL AND text != '' ORDER BY received_at DESC LIMIT ?`).all(limit) as TrialSample[];
   // Mentions are raw ids (<@U123>) in the ledger; the label only needs to be recognisable.
-  return rows.map((r) => ({ ...r, text: clip(r.text.replace(/<@[A-Z0-9]+>/g, "@某人"), 300) }));
+  const someone = t("@某人", "@someone");
+  return rows.map((r) => ({ ...r, text: clip(r.text.replace(/<@[A-Z0-9]+>/g, someone), 300) }));
 }
 
 export interface TrialResult {
@@ -58,7 +60,7 @@ export interface Trial {
 export function parseTrialResult(text: string): TrialResult {
   const o = extractJson<Record<string, unknown>>(text, "object");
   const action = String(o.action ?? "");
-  if (action !== "reply" && action !== "no_reply" && action !== "needs_me") throw new Error(`试跑结果的 action 不对：${clip(action, 40)}`);
+  if (action !== "reply" && action !== "no_reply" && action !== "needs_me") throw new Error(t(`试跑结果的 action 不对：${clip(action, 40)}`, `The dry run returned an unknown action: ${clip(action, 40)}`));
   const draft = typeof o.draft === "string" && o.draft.trim() ? o.draft.trim() : null;
   return { action, judgement: clip(String(o.judgement ?? ""), 2000), draft: action === "reply" ? draft : null };
 }
@@ -77,9 +79,9 @@ export class Trials {
 
   /** One at a time: each costs about as much as handling a real message. */
   start(eventId: number): Trial {
-    if ([...this.trials.values()].some((t) => t.status === "running")) throw new Error("已经有一个试跑在跑了，等它结束");
+    if ([...this.trials.values()].some((x) => x.status === "running")) throw new Error(t("已经有一个试跑在跑了，等它结束", "A dry run is already running; wait for it to finish"));
     const ev = this.db.prepare("SELECT * FROM events WHERE id = ?").get(eventId) as EventRow | null;
-    if (!ev || ev.source !== "slack" || !ev.channel || !ev.ts) throw new Error("没有这条 Slack 消息");
+    if (!ev || ev.source !== "slack" || !ev.channel || !ev.ts) throw new Error(t("没有这条 Slack 消息", "No such Slack message"));
     const trial: Trial = { id: newId("x"), eventId, status: "running", startedAt: Date.now(), endedAt: null, costUsd: null, result: null, error: null };
     this.trials.set(trial.id, trial);
     for (const old of [...this.trials.keys()].slice(0, -KEEP)) this.trials.delete(old);
@@ -116,7 +118,7 @@ export class Trials {
     this.handle = null;
     trial.costUsd = r.costUsd;
     trial.endedAt = Date.now();
-    if (r.isError || r.timedOut) throw new Error(r.timedOut ? "超时" : clip(r.text, 300) || "没有结果");
+    if (r.isError || r.timedOut) throw new Error(r.timedOut ? t("超时", "Timed out") : clip(r.text, 300) || t("没有结果", "No result"));
     trial.result = parseTrialResult(r.text);
     trial.status = "done";
     log(`trial: ${trial.id} → ${trial.result.action} $${r.costUsd?.toFixed(3) ?? "?"}`);

@@ -20,6 +20,7 @@ import { addManualTask, cancel, clearFinished, continueInClaude, deleteTask, pro
 import { EFFORTS, loadSettings, MODELS, readEngineConfig, updateSettings } from "./settings.ts";
 import { SUGGESTED_ROOT, useWorkspace } from "./setup.ts";
 import type { SlackLogin } from "./slacklogin.ts";
+import { lang, t } from "./i18n.ts";
 import { INSTALL_COMMAND, type UpdateInfo } from "./update.ts";
 import { BINARY_MTIME, expandHome, log, RUNTIME_FILE, VERSION } from "./util.ts";
 
@@ -47,6 +48,7 @@ function settingsView(profile: Profile, file?: string) {
     workHours: s.workHours,
     autoFull: s.autoFull,
     signReplies: s.signReplies,
+    language: s.language,
     notifyMacos: s.notifyMacos ?? profile.notify.macos,
     notifySlackDm: s.notifySlackDm ?? profile.notify.slackSelfDm,
     defaults: { model: profile.agent.model, effort: profile.agent.effort ?? null, pollMinutes: profile.slack.pollMinutes },
@@ -87,29 +89,29 @@ const json = (data: unknown, status = 200) => Response.json(data, { status, head
 
 async function body(req: Request, max = 64_000): Promise<Record<string, unknown>> {
   const text = await req.text();
-  if (text.length > max) throw new HttpError(413, "请求太大");
+  if (text.length > max) throw new HttpError(413, t("请求太大", "Request too large"));
   if (!text) return {};
   try {
     const v = JSON.parse(text);
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error();
     return v as Record<string, unknown>;
   } catch {
-    throw new HttpError(400, "请求体不是 JSON 对象");
+    throw new HttpError(400, t("请求体不是 JSON 对象", "The request body is not a JSON object"));
   }
 }
 
 function str(v: unknown, name: string, max: number, required = false): string | undefined {
   if (v === undefined || v === null || v === "") {
-    if (required) throw new HttpError(400, `缺少 ${name}`);
+    if (required) throw new HttpError(400, t(`缺少 ${name}`, `${name} is missing`));
     return undefined;
   }
-  if (typeof v !== "string") throw new HttpError(400, `${name} 必须是字符串`);
-  if (v.length > max) throw new HttpError(400, `${name} 超过 ${max} 个字符`);
+  if (typeof v !== "string") throw new HttpError(400, t(`${name} 必须是字符串`, `${name} must be a string`));
+  if (v.length > max) throw new HttpError(400, t(`${name} 超过 ${max} 个字符`, `${name} is longer than ${max} characters`));
   return v;
 }
 
 function idParam(v: string | undefined): string {
-  if (!v || !ID.test(v)) throw new HttpError(400, "id 格式不对");
+  if (!v || !ID.test(v)) throw new HttpError(400, t("id 格式不对", "Malformed id"));
   return v;
 }
 
@@ -149,7 +151,7 @@ function stream(tick: (send: (event: string, data: unknown) => void, close: () =
 /** Tail a run's stream-json log: everything so far, then new lines until the run has ended. */
 function tailRun(db: Database, runId: string): Response {
   const run = db.prepare("SELECT * FROM runs WHERE id = ?").get(runId) as RunRow | null;
-  if (!run?.log_path) throw new HttpError(404, "没有这次运行");
+  if (!run?.log_path) throw new HttpError(404, t("没有这次运行", "No such run"));
   let offset = 0;
   let rest = "";
   return stream((send, close) => {
@@ -241,12 +243,12 @@ export function startServer(deps: ServerDeps): Served {
   return launch(deps, (authed) => ({
     "/": index,
     "/api/state": {
-      GET: authed(() => json({ profile: profile.name, version: VERSION, notifyMacos: loadSettings(deps.settingsFile).notifyMacos ?? profile.notify.macos, ...stateSummary(db), ...live() })),
+      GET: authed(() => json({ profile: profile.name, version: VERSION, lang: lang(), notifyMacos: loadSettings(deps.settingsFile).notifyMacos ?? profile.notify.macos, ...stateSummary(db), ...live() })),
     },
     "/api/tasks": {
       GET: authed((req) => {
         const f = new URL(req.url).searchParams.get("filter") ?? "all";
-        if (!["attention", "active", "closed", "all"].includes(f)) throw new HttpError(400, "filter 不对");
+        if (!["attention", "active", "closed", "all"].includes(f)) throw new HttpError(400, t("filter 不对", "Unknown filter"));
         return json(listTasks(db, f as TaskFilter));
       }),
       POST: authed(async (req) => {
@@ -257,7 +259,7 @@ export function startServer(deps: ServerDeps): Served {
     "/api/tasks/:id": {
       GET: authed((req) => {
         const d = taskDetail(db, idParam(req.params.id));
-        if (!d) throw new HttpError(404, "没有这个任务");
+        if (!d) throw new HttpError(404, t("没有这个任务", "No such task"));
         return json(d);
       }),
       DELETE: authed(async (req) => { await deleteTask(db, idParam(req.params.id)); return json({ ok: true }); }),
@@ -267,7 +269,7 @@ export function startServer(deps: ServerDeps): Served {
     "/api/slack/login": {
       GET: authed(() => json(deps.slackLogin?.view() ?? { state: "idle", startedAt: null, message: "" })),
       POST: authed(() => {
-        if (!deps.slackLogin) throw new HttpError(503, "daemon 没有接上 Slack 登录");
+        if (!deps.slackLogin) throw new HttpError(503, t("daemon 没有接上 Slack 登录", "This daemon has no Slack sign-in"));
         return json(deps.slackLogin.start());
       }),
     },
@@ -282,11 +284,11 @@ export function startServer(deps: ServerDeps): Served {
         const b = await body(req);
         const nullable = (v: unknown, name: string) => (v === null ? null : str(v, name, 100));
         for (const k of ["realtime", "notifyMacos", "notifySlackDm", "signReplies"]) {
-          if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "boolean") throw new HttpError(400, `${k} 必须是 true / false`);
+          if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "boolean") throw new HttpError(400, t(`${k} 必须是 true / false`, `${k} must be true or false`));
         }
-        if (b.realtime === null) throw new HttpError(400, "realtime 必须是 true / false");
+        if (b.realtime === null) throw new HttpError(400, t("realtime 必须是 true / false", "realtime must be true or false"));
         for (const k of ["pollMinutes", "threadMergeHours", "dmMergeHours"]) {
-          if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "number") throw new HttpError(400, `${k} 必须是数字`);
+          if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "number") throw new HttpError(400, t(`${k} 必须是数字`, `${k} must be a number`));
         }
         updateSettings({
           mode: str(b.mode, "mode", 10),
@@ -302,6 +304,7 @@ export function startServer(deps: ServerDeps): Served {
           workHours: b.workHours,
           autoFull: b.autoFull,
           signReplies: b.signReplies,
+          language: b.language === undefined ? undefined : str(b.language, "language", 10),
           notifyMacos: b.notifyMacos,
           notifySlackDm: b.notifySlackDm,
         }, deps.settingsFile);
@@ -318,7 +321,7 @@ export function startServer(deps: ServerDeps): Served {
     "/api/doctor": {
       GET: authed(() => json(deps.doctor?.report() ?? null)),
       POST: authed(async () => {
-        if (!deps.doctor) throw new HttpError(404, "这个 daemon 没有诊断");
+        if (!deps.doctor) throw new HttpError(404, t("这个 daemon 没有诊断", "This daemon has no diagnostics"));
         return json(await deps.doctor.runNow(true));
       }),
     },
@@ -334,8 +337,8 @@ export function startServer(deps: ServerDeps): Served {
       PUT: authed(async (req) => {
         const b = await body(req, 3 * MAX_PERSONA_CHARS);
         const path = str(b.path, "path", 300, true)!;
-        if (typeof b.content !== "string") throw new HttpError(400, "content 必须是字符串");
-        if (b.baseMtime !== null && typeof b.baseMtime !== "number") throw new HttpError(400, "baseMtime 必须是数字或 null");
+        if (typeof b.content !== "string") throw new HttpError(400, t("content 必须是字符串", "content must be a string"));
+        if (b.baseMtime !== null && typeof b.baseMtime !== "number") throw new HttpError(400, t("baseMtime 必须是数字或 null", "baseMtime must be a number or null"));
         try {
           return json(writePersona(profile, path, b.content, b.baseMtime));
         } catch (e) {
@@ -347,9 +350,9 @@ export function startServer(deps: ServerDeps): Served {
     "/api/persona/samples": { GET: authed(() => json(trialSamples(db))) },
     "/api/persona/trials": {
       POST: authed(async (req) => {
-        if (!deps.trials) throw new HttpError(404, "这个 daemon 不能试跑");
+        if (!deps.trials) throw new HttpError(404, t("这个 daemon 不能试跑", "This daemon cannot do dry runs"));
         const b = await body(req);
-        if (typeof b.eventId !== "number" || !Number.isInteger(b.eventId)) throw new HttpError(400, "eventId 必须是整数");
+        if (typeof b.eventId !== "number" || !Number.isInteger(b.eventId)) throw new HttpError(400, t("eventId 必须是整数", "eventId must be an integer"));
         try {
           return json(deps.trials.start(b.eventId), 201);
         } catch (e) {
@@ -359,9 +362,9 @@ export function startServer(deps: ServerDeps): Served {
     },
     "/api/persona/trials/:id": {
       GET: authed((req) => {
-        const t = deps.trials?.get(idParam(req.params.id));
-        if (!t) throw new HttpError(404, "没有这次试跑");
-        return json(t);
+        const trial = deps.trials?.get(idParam(req.params.id));
+        if (!trial) throw new HttpError(404, t("没有这次试跑", "No such dry run"));
+        return json(trial);
       }),
     },
     "/api/daemon/restart": {
@@ -396,7 +399,7 @@ export function startServer(deps: ServerDeps): Served {
     "/api/runs/:id/log": {
       GET: authed((req) => {
         const run = db.prepare("SELECT log_path FROM runs WHERE id = ?").get(idParam(req.params.id)) as { log_path: string } | null;
-        if (!run) throw new HttpError(404, "没有这次运行");
+        if (!run) throw new HttpError(404, t("没有这次运行", "No such run"));
         return json(readRunLog(run.log_path));
       }),
     },

@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { t } from "./i18n.ts";
 import { isSafeRelative } from "./persona.ts";
 import { expandHome, HOME } from "./util.ts";
 
@@ -56,7 +57,9 @@ const ProfileSchema = z.object({
    * The persona (分身) files, relative to the root: who I am, what I own, how I talk, what must never
    * be promised for me. Put into every run's system prompt; edited from the panel.
    */
-  persona: z.array(z.string().refine((p) => isSafeRelative(p), "分身文件要写工作区里的相对路径，以 .md 结尾")).min(1).default(["sidekick/me.md"]),
+  persona: z.array(z.string().refine((p) => isSafeRelative(p), {
+    error: () => t("分身文件要写工作区里的相对路径，以 .md 结尾", "Persona files must be paths relative to the workspace, ending in .md"),
+  })).min(1).default(["sidekick/me.md"]),
   notify: z.object({
     macos: z.boolean().default(true),
     /** DM myself on Slack for approvals, interrupts and failures. Only ever to my own DM. */

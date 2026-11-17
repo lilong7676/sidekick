@@ -5,8 +5,10 @@
 //
 // It is never the default browser: Chrome refuses the DevTools port slackcli reads tokens through on
 // the everyday profile, so slackcli takes Chrome, then Edge, Chromium or Brave, with its own profile.
-// The panel says so up front; a Mac with none of them gets that said in Chinese, not slackcli's hint.
+// The panel says so up front; a Mac with none of them gets that said in the interface language, not
+// slackcli's hint.
 
+import { t } from "./i18n.ts";
 import { cleanEnv, clip, runProcess, SLACKCLI, type ProcessResult } from "./util.ts";
 
 export interface LoginJob {
@@ -27,10 +29,13 @@ const login: Run = () =>
 function lastWords(r: ProcessResult): string {
   const text = `${r.stderr}\n${r.stdout}`.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
   if (text.includes("No Chrome, Edge, Chromium, or Brave installation found")) {
-    return "没找到 Chrome、Edge 或 Brave。登录 Slack 要用其中一个单独开窗口，装一个再点。";
+    return t(
+      "没找到 Chrome、Edge 或 Brave。登录 Slack 要用其中一个单独开窗口，装一个再点。",
+      "Chrome, Edge or Brave not found. Signing in to Slack opens a separate window in one of them; install one and try again.",
+    );
   }
   const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l && !/^[-✔✖⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s/.test(l));
-  return clip(lines.at(-1) ?? (r.code === null ? "slackcli 没能启动" : `slackcli 退出码 ${r.code}`), 200);
+  return clip(lines.at(-1) ?? (r.code === null ? t("slackcli 没能启动", "slackcli did not start") : t(`slackcli 退出码 ${r.code}`, `slackcli exited with code ${r.code}`)), 200);
 }
 
 export class SlackLogin {
@@ -45,18 +50,27 @@ export class SlackLogin {
 
   start(): LoginJob {
     if (this.job.state === "running") return this.job;
-    this.job = { state: "running", startedAt: Date.now(), message: "已单独打开一个 Chrome 窗口：在里面登录 Slack，登录完它会自己关掉，最多等 5 分钟。" };
+    this.job = {
+      state: "running",
+      startedAt: Date.now(),
+      message: t(
+        "已单独打开一个 Chrome 窗口：在里面登录 Slack，登录完它会自己关掉，最多等 5 分钟。",
+        "A separate Chrome window is open: sign in to Slack there. It closes by itself once you are signed in; this waits up to 5 minutes.",
+      ),
+    };
     this.run()
       .then((r) => {
         if (r.code === 0) {
-          this.job = { ...this.job, state: "ok", message: "已登录 Slack。" };
+          this.job = { ...this.job, state: "ok", message: t("已登录 Slack。", "Signed in to Slack.") };
           this.onSignedIn();
         } else {
-          this.job = { ...this.job, state: "failed", message: `没登录成功：${lastWords(r)}` };
+          const why = lastWords(r);
+          this.job = { ...this.job, state: "failed", message: t(`没登录成功：${why}`, `Sign-in failed: ${why}`) };
         }
       })
       .catch((e) => {
-        this.job = { ...this.job, state: "failed", message: `没登录成功：${clip(String(e), 200)}` };
+        const why = clip(String(e), 200);
+        this.job = { ...this.job, state: "failed", message: t(`没登录成功：${why}`, `Sign-in failed: ${why}`) };
       });
     return this.job;
   }

@@ -16,6 +16,8 @@ struct DaemonState: Decodable {
     let attention: Int?
     /** 设置 → 通知 → macOS 通知. */
     let notifyMacos: Bool?
+    /** Interface language the daemon resolved: "zh" or "en" (Lang.swift). */
+    let lang: String?
 }
 
 struct ApprovalItem: Decodable {

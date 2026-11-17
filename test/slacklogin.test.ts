@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { setLang } from "../src/i18n.ts";
 import { SlackLogin } from "../src/slacklogin.ts";
 import type { ProcessResult } from "../src/util.ts";
 
@@ -52,6 +53,30 @@ describe("signing in to Slack from the panel", () => {
     expect(login.view()).toMatchObject({
       state: "failed",
       message: "没登录成功：没找到 Chrome、Edge 或 Brave。登录 Slack 要用其中一个单独开窗口，装一个再点。",
+    });
+  });
+
+  describe("in English", () => {
+    afterEach(() => setLang("zh"));
+
+    test("what the panel shows while waiting, after success and after a failure", async () => {
+      setLang("en");
+      const c = controlled();
+      const login = new SlackLogin(() => {}, c.run);
+      expect(login.start().message).toBe("A separate Chrome window is open: sign in to Slack there. It closes by itself once you are signed in; this waits up to 5 minutes.");
+      c.finish({ code: 0, stdout: "", stderr: "" });
+      await settle();
+      expect(login.view()).toMatchObject({ state: "ok", message: "Signed in to Slack." });
+
+      const d = controlled();
+      const again = new SlackLogin(() => {}, d.run);
+      again.start();
+      d.finish({ code: 1, stdout: "", stderr: "✖ No Chrome, Edge, Chromium, or Brave installation found.\n" });
+      await settle();
+      expect(again.view()).toMatchObject({
+        state: "failed",
+        message: "Sign-in failed: Chrome, Edge or Brave not found. Signing in to Slack opens a separate window in one of them; install one and try again.",
+      });
     });
   });
 });

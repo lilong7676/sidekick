@@ -81,9 +81,14 @@ enum DaemonService {
 
     /// What the offline page and the app checks say about the daemon.
     static var statusText: String {
-        if !FileManager.default.fileExists(atPath: plistURL.path) { return "还没装成常驻服务，重新打开 Sidekick 会装上" }
-        if !loaded { return "装了，但 launchd 没加载（可能在 系统设置 → 通用 → 登录项 里被关掉了）" }
-        return "launchd 托管中"
+        if !FileManager.default.fileExists(atPath: plistURL.path) {
+            return L("还没装成常驻服务，重新打开 Sidekick 会装上", "Not installed as a background service yet; reopening Sidekick installs it")
+        }
+        if !loaded {
+            return L("装了，但 launchd 没加载（可能在 系统设置 → 通用 → 登录项 里被关掉了）",
+                     "Installed, but launchd has not loaded it (it may be turned off in System Settings → General → Login Items)")
+        }
+        return L("launchd 托管中", "Running under launchd")
     }
 
     /// Restart the daemon (on whatever binary the plist names). Also how an upgrade takes over.
@@ -133,10 +138,11 @@ enum DaemonService {
         guard !asked else { return }
         asked = true
         let alert = NSAlert()
-        alert.messageText = "允许 sidekick 在后台运行"
-        alert.informativeText = "sidekick 的 daemon 要在后台常驻，才能收 Slack 消息、处理任务。在 系统设置 → 通用 → 登录项 里，把「允许在后台」下的 sidekick 打开，再重新打开 Sidekick。"
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "稍后")
+        alert.messageText = L("允许 sidekick 在后台运行", "Allow sidekick to run in the background")
+        alert.informativeText = L("sidekick 的 daemon 要在后台常驻，才能收 Slack 消息、处理任务。在 系统设置 → 通用 → 登录项 里，把「允许在后台」下的 sidekick 打开，再重新打开 Sidekick。",
+                                  "sidekick's daemon has to keep running in the background to receive Slack messages and work on tasks. In System Settings → General → Login Items, turn on sidekick under Allow in the Background, then reopen Sidekick.")
+        alert.addButton(withTitle: L("打开系统设置", "Open System Settings"))
+        alert.addButton(withTitle: L("稍后", "Later"))
         if alert.runModal() == .alertFirstButtonReturn { SMAppService.openSystemSettingsLoginItems() }
     }
 

@@ -7,15 +7,18 @@ final class WebPanel: NSViewController, WKNavigationDelegate, WKScriptMessageHan
     private let client: DaemonClient
     private let onBadgeRefresh: () -> Void
     private let onOpenWindow: () -> Void
+    private let onLanguage: (String?) -> Void
     private var webView: WKWebView!
     private var loadedRuntime: Runtime?
     private let size: NSSize
 
-    init(client: DaemonClient, size: NSSize, onBadgeRefresh: @escaping () -> Void, onOpenWindow: @escaping () -> Void) {
+    init(client: DaemonClient, size: NSSize, onBadgeRefresh: @escaping () -> Void, onOpenWindow: @escaping () -> Void,
+         onLanguage: @escaping (String?) -> Void) {
         self.client = client
         self.size = size
         self.onBadgeRefresh = onBadgeRefresh
         self.onOpenWindow = onOpenWindow
+        self.onLanguage = onLanguage
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,7 +42,7 @@ final class WebPanel: NSViewController, WKNavigationDelegate, WKScriptMessageHan
         guard isViewLoaded else { return }
         guard let rt = client.runtime() else {
             loadedRuntime = nil
-            showOffline("找不到 ~/.config/sidekick/runtime.json，daemon 还没启动过。")
+            showOffline(L("找不到 ~/.config/sidekick/runtime.json，daemon 还没启动过。", "Can't find ~/.config/sidekick/runtime.json: the daemon has not started yet."))
             return
         }
         if !force, rt == loadedRuntime { return }
@@ -47,7 +50,7 @@ final class WebPanel: NSViewController, WKNavigationDelegate, WKScriptMessageHan
         ucc.removeAllUserScripts()
         // The token is hex from the daemon; still, never interpolate anything unchecked into script.
         guard rt.token.allSatisfy({ $0.isHexDigit }) else {
-            showOffline("runtime.json 里的 token 格式不对。")
+            showOffline(L("runtime.json 里的 token 格式不对。", "The token in runtime.json is malformed."))
             return
         }
         ucc.addUserScript(WKUserScript(source: "window.SIDEKICK_TOKEN = '\(rt.token)';", injectionTime: .atDocumentStart, forMainFrameOnly: true))
@@ -64,10 +67,10 @@ final class WebPanel: NSViewController, WKNavigationDelegate, WKScriptMessageHan
     private func showOffline(_ reason: String) {
         let html = """
         <html><body style="font: 13px -apple-system; padding: 24px; color: #6e6e73; background: transparent">
-        <h3 style="color: #c96442; margin-top: 0">连不上 sidekick daemon</h3>
+        <h3 style="color: #c96442; margin-top: 0">\(L("连不上 sidekick daemon", "Can't reach the sidekick daemon"))</h3>
         <p>\(reason.replacingOccurrences(of: "<", with: "&lt;"))</p>
-        <p>daemon：\(DaemonService.statusText.replacingOccurrences(of: "<", with: "&lt;"))。</p>
-        <p>刚装好时等几秒；一直这样就右键菜单栏图标 →「重启 daemon」，再「重新加载」。</p>
+        <p>\(L("daemon：", "Daemon: "))\(DaemonService.statusText.replacingOccurrences(of: "<", with: "&lt;"))\(L("。", "."))</p>
+        <p>\(L("刚装好时等几秒；一直这样就右键菜单栏图标 →「重启 daemon」，再「重新加载」。", "Right after installing, give it a few seconds. If it stays like this, right-click the menu bar icon → Restart daemon, then Reload."))</p>
         </body></html>
         """
         webView.loadHTMLString(html, baseURL: nil)
@@ -87,7 +90,7 @@ final class WebPanel: NSViewController, WKNavigationDelegate, WKScriptMessageHan
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         loadedRuntime = nil
-        showOffline("daemon 没有响应（\(error.localizedDescription)）。")
+        showOffline(L("daemon 没有响应（\(error.localizedDescription)）。", "The daemon is not responding (\(error.localizedDescription))."))
     }
 
     // MARK: bridge
@@ -127,15 +130,20 @@ final class WebPanel: NSViewController, WKNavigationDelegate, WKScriptMessageHan
               let type = body["type"] as? String else { return replyHandler(nil, "refused") }
         switch type {
         case "appChecks":
-            AppChecks.run { replyHandler($0, nil) }
+            // Ask the daemon for the language first: the panel may ask for these right after the language
+            // is switched in 设置, before the next state poll (every 5 s) has picked it up.
+            Task { @MainActor in
+                if let state = try? await client.state() { onLanguage(state.lang) }
+                AppChecks.run { replyHandler($0, nil) }
+            }
         case "pickFolder":
             // Setup: the page cannot learn a folder's path from a file input, so ask natively.
             let open = NSOpenPanel()
             open.canChooseDirectories = true
             open.canChooseFiles = false
             open.canCreateDirectories = true
-            open.prompt = "用这个文件夹"
-            open.message = "选一个文件夹当 sidekick 的工作区"
+            open.prompt = L("用这个文件夹", "Use this folder")
+            open.message = L("选一个文件夹当 sidekick 的工作区", "Choose a folder for sidekick's workspace")
             NSApp.activate(ignoringOtherApps: true)
             replyHandler(open.runModal() == .OK ? open.url?.path : nil, nil)
         default:

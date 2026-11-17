@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ENGINE_CONFIG, loadProfile } from "./config.ts";
+import { t } from "./i18n.ts";
 import { PERSONA_TEMPLATE } from "./persona.ts";
 import { setWorkspaceRoot } from "./settings.ts";
 import profileTemplate from "../templates/profile.yaml" with { type: "text" };
@@ -41,8 +42,8 @@ export function scaffoldWorkspace(root: string): string[] {
 /** Use this folder as the workspace (creating it if asked for a new one). Takes effect after a daemon restart. */
 export function useWorkspace(input: string, engineConfig = ENGINE_CONFIG): { root: string; created: string[] } {
   const root = expandHome(input.trim()).replace(/\/+$/, "");
-  if (!root.startsWith("/")) throw new Error("要写绝对路径，或 ~/ 开头");
-  if (existsSync(root) && !statSync(root).isDirectory()) throw new Error(`${root} 不是文件夹`);
+  if (!root.startsWith("/")) throw new Error(t("要写绝对路径，或 ~/ 开头", "Use an absolute path, or one starting with ~/"));
+  if (existsSync(root) && !statSync(root).isDirectory()) throw new Error(t(`${root} 不是文件夹`, `${root} is not a folder`));
   mkdirSync(root, { recursive: true });
   const created = scaffoldWorkspace(root);
   loadProfile("work", root); // a broken profile already there says why, before anything points at it

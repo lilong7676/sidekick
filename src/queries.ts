@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import { getTask, OPEN_STATUSES, setTaskStatus, type ApprovalRow, type EventRow, type RunRow, type TaskRow } from "./db.ts";
 import { launchSpec } from "./handle.ts";
+import { t } from "./i18n.ts";
 import { CLAUDE, clip, log, newId, runProcess } from "./util.ts";
 import { shellQuote, takeoverArgs, writeMcpConfig } from "./runner.ts";
 import { effectiveMode, loadSettings, runSettings } from "./settings.ts";
@@ -140,8 +141,8 @@ export function addManualTask(db: Database, text: string): string {
 }
 
 export function handback(db: Database, id: string, message?: string): void {
-  const t = getTask(db, id);
-  if (!t) throw new Error("没有这个任务");
+  const task = getTask(db, id);
+  if (!task) throw new Error(t("没有这个任务", "No such task"));
   const msg = message?.trim() || "使用者在终端里接管过这个会话，刚交还给你。看一下最新进展，继续处理。";
   db.prepare("UPDATE tasks SET next_prompt = COALESCE(next_prompt || char(10), '') || ? WHERE id = ?").run(msg, id);
   setTaskStatus(db, id, "queued");
@@ -170,7 +171,7 @@ type DiscardDraft = (draftId: string) => void | Promise<void>;
  * nor counted as waiting for me.
  */
 export async function cancel(db: Database, id: string, discardDraft: DiscardDraft = deleteDraft): Promise<{ stopped: number; closed: number }> {
-  if (!getTask(db, id)) throw new Error("没有这个任务");
+  if (!getTask(db, id)) throw new Error(t("没有这个任务", "No such task"));
   // Status first, so the run's exit handler sees "cancelled" and does not requeue or retry it.
   setTaskStatus(db, id, "cancelled");
   const stopped = killLiveRuns(db, id);
@@ -240,14 +241,14 @@ export function slackPeople(db: Database, days = 60): { people: Array<{ id: stri
  * not waiting on a rule, so there is nothing to undo.
  */
 export function processNow(db: Database, id: string): void {
-  const t = getTask(db, id);
-  if (!t) throw new Error("没有这个任务");
-  if (t.status === "queued" && t.not_before) {
+  const task = getTask(db, id);
+  if (!task) throw new Error(t("没有这个任务", "No such task"));
+  if (task.status === "queued" && task.not_before) {
     db.prepare("UPDATE tasks SET not_before = NULL, updated_at = ? WHERE id = ?").run(Date.now(), id);
-  } else if (t.status === "closed" && t.outcome === "skipped") {
+  } else if (task.status === "closed" && task.outcome === "skipped") {
     setTaskStatus(db, id, "queued", { outcome: null, summary: null, not_before: null });
   } else {
-    throw new Error("这个任务没有在等规则放行");
+    throw new Error(t("这个任务没有在等规则放行", "This task is not waiting on a rule"));
   }
 }
 
@@ -257,7 +258,10 @@ export interface Continued { where: "terminal" | "desktop"; cwd: string; session
 /** `claude --desktop` needs a terminal to talk to; script(1) lends it one. Its output keeps the colours. */
 async function openInDesktop(cwd: string, session: string): Promise<void> {
   const r = await runProcess(["/usr/bin/script", "-q", "/dev/null", CLAUDE, "--desktop", "--resume", session], { cwd, timeoutMs: 30_000 });
-  if (r.code !== 0) throw new Error(`没能在 Claude 桌面 app 打开：${clip((r.stdout + r.stderr).replace(/\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\r]/g, "").trim(), 200)}`);
+  if (r.code !== 0) {
+    const out = clip((r.stdout + r.stderr).replace(/\x1b\[[0-9;?]*[A-Za-z]|[\x00-\x08\r]/g, "").trim(), 200);
+    throw new Error(t(`没能在 Claude 桌面 app 打开：${out}`, `Could not open it in the Claude desktop app: ${out}`));
+  }
 }
 
 /**
@@ -273,17 +277,17 @@ export async function continueInClaude(
   where: "terminal" | "desktop",
   open: (cwd: string, session: string) => Promise<void> = openInDesktop,
 ): Promise<Continued> {
-  const t = getTask(db, id);
-  if (!t?.session_id) throw new Error("这个任务还没有会话");
-  if (t.status === "running") throw new Error("任务正在跑，等这一轮结束再继续");
-  const name = `sidekick：${t.title.replace(/\s+/g, " ")}`.slice(0, 60);
-  const resume = [CLAUDE, "--resume", t.session_id];
+  const task = getTask(db, id);
+  if (!task?.session_id) throw new Error(t("这个任务还没有会话", "This task has no session yet"));
+  if (task.status === "running") throw new Error(t("任务正在跑，等这一轮结束再继续", "The task is running; wait for this run to end, then continue"));
+  const name = `sidekick：${task.title.replace(/\s+/g, " ")}`.slice(0, 60);
+  const resume = [CLAUDE, "--resume", task.session_id];
   if (where === "terminal") {
-    return { where, cwd: profile.root, session: t.session_id, name, command: [...resume, "--fork-session", "-n", name].map(shellQuote).join(" ") };
+    return { where, cwd: profile.root, session: task.session_id, name, command: [...resume, "--fork-session", "-n", name].map(shellQuote).join(" ") };
   }
-  await open(profile.root, t.session_id);
-  db.prepare("UPDATE tasks SET handed_off_at = ? WHERE id = ?").run(Date.now(), t.id);
-  return { where, cwd: profile.root, session: t.session_id, name, command: [...resume, "--desktop"].map(shellQuote).join(" ") };
+  await open(profile.root, task.session_id);
+  db.prepare("UPDATE tasks SET handed_off_at = ? WHERE id = ?").run(Date.now(), task.id);
+  return { where, cwd: profile.root, session: task.session_id, name, command: [...resume, "--desktop"].map(shellQuote).join(" ") };
 }
 
 /** Pause the task and return the shell command that opens its session in a terminal. */
@@ -292,14 +296,14 @@ export async function continueInClaude(
  * quotes each one itself (WebPanel.swift Terminal.takeover); `command` is for showing and the CLI.
  */
 export function takeover(profile: Profile, db: Database, id: string): { cwd: string; args: string[]; command: string } {
-  const t = getTask(db, id);
-  if (!t?.session_id) throw new Error("这个任务还没有会话");
-  if (t.status === "running") throw new Error("任务正在跑，等这一轮结束，或者先取消");
-  setTaskStatus(db, t.id, "paused");
+  const task = getTask(db, id);
+  if (!task?.session_id) throw new Error(t("这个任务还没有会话", "This task has no session yet"));
+  if (task.status === "running") throw new Error(t("任务正在跑，等这一轮结束，或者先取消", "The task is running; wait for this run to end, or cancel it first"));
+  setTaskStatus(db, task.id, "paused");
   const runId = newId("r");
-  const spec = launchSpec(profile, t, runId, join(profile.stateDir, "sidekick.db"), runSettings());
+  const spec = launchSpec(profile, task, runId, join(profile.stateDir, "sidekick.db"), runSettings());
   const mcp = writeMcpConfig(join(profile.stateDir, "runs"), runId, spec.sidekickMcp!);
-  const args = takeoverArgs(spec, t.session_id, mcp);
+  const args = takeoverArgs(spec, task.session_id, mcp);
   return { cwd: profile.root, args, command: [CLAUDE, ...args].map(shellQuote).join(" ") };
 }
 

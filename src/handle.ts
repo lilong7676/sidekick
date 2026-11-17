@@ -5,6 +5,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import { getTask, setTaskStatus, type ApprovalRow, type EventRow, type TaskRow } from "./db.ts";
+import { t } from "./i18n.ts";
 import { personaPrompt } from "./persona.ts";
 import { startRun, writeGuardPolicy, type LaunchSpec, type RunHandle } from "./runner.ts";
 import { runSettings, type Settings } from "./settings.ts";
@@ -130,7 +131,7 @@ export async function startTaskRun(profile: Profile, db: Database, task: TaskRow
   } else if (task.source === "slack") {
     const ev = db.prepare("SELECT * FROM events WHERE id = ?").get(task.event_id) as EventRow | null;
     if (!ev) {
-      setTaskStatus(db, task.id, "failed", { summary: "找不到来源事件" });
+      setTaskStatus(db, task.id, "failed", { summary: t("找不到来源事件", "The source event is missing") });
       return null;
     }
     const me = await whoami(db);
@@ -186,6 +187,6 @@ export function settle(db: Database, taskId: string, failed: boolean): void {
     case "reply_proposed": // proposed and already decided while running
       return setTaskStatus(db, taskId, "done");
     default:
-      return setTaskStatus(db, taskId, "needs_me", { summary: task.summary ?? "agent 没有给出结论，需要你看一下。" });
+      return setTaskStatus(db, taskId, "needs_me", { summary: task.summary ?? t("agent 没有给出结论，需要你看一下。", "The agent gave no conclusion; take a look.") });
   }
 }

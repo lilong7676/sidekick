@@ -1,6 +1,8 @@
 // Talking to the daemon. The token comes from the menu bar app (injected before the page loads);
 // in a plain browser it can be pasted once and is kept for this tab only.
 
+import type { Lang } from "../src/i18n.ts";
+
 declare global {
   interface Window {
     SIDEKICK_TOKEN?: string;
@@ -172,6 +174,8 @@ export interface DoctorReport { at: number; checks: Check[] }
 export interface State {
   profile: string; counts: Partial<Record<Status, number>>; pendingApprovals: number; costToday: number; attention: number;
   version?: string;
+  /** The interface language the daemon resolved (src/i18n.ts). */
+  lang?: Lang;
   /** A newer Sidekick on GitHub Releases (src/update.ts). */
   update?: { version: string; url: string } | null;
   /** The one-line install, which is also how to upgrade. */

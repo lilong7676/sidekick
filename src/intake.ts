@@ -6,6 +6,7 @@
 
 import type { Database } from "bun:sqlite";
 import { getTask, setTaskStatus, type EventRow } from "./db.ts";
+import { t } from "./i18n.ts";
 import { loadSettings } from "./settings.ts";
 import { clip, log, newId } from "./util.ts";
 
@@ -39,10 +40,19 @@ export function nextWorkStart(now: Date, wh: WorkHours | null): number | null {
   return next.getTime();
 }
 
-/** Why a new message is not worked on, if a rule says so. */
+/**
+ * Why a new message is not worked on, if a rule says so. Shown as the task's summary, in the language
+ * of the moment it is written; code goes by the outcome "skipped", never by this text.
+ */
 function skipReason(ev: EventRow, rules: IntakeRules): string | null {
-  if (ev.user_id && rules.skipUsers.includes(ev.user_id)) return `按规则跳过：不处理 ${ev.user_name ?? ev.user_id} 的消息。`;
-  if (ev.channel && rules.skipChannels.includes(ev.channel)) return `按规则跳过：不处理 #${ev.channel_name ?? ev.channel} 里的 @。`;
+  if (ev.user_id && rules.skipUsers.includes(ev.user_id)) {
+    const who = ev.user_name ?? ev.user_id;
+    return t(`按规则跳过：不处理 ${who} 的消息。`, `Skipped by a rule: skip messages from ${who}.`);
+  }
+  if (ev.channel && rules.skipChannels.includes(ev.channel)) {
+    const where = `#${ev.channel_name ?? ev.channel}`;
+    return t(`按规则跳过：不处理 ${where} 里的 @。`, `Skipped by a rule: skip @-mentions in ${where}.`);
+  }
   return null;
 }
 
@@ -96,7 +106,7 @@ export function intakeSlack(db: Database, rules: IntakeRules = rulesFromSettings
     // Skipped: closed at once, with the reason, so I can still see it and run it anyway from the panel.
     db.prepare(`INSERT INTO tasks (id, source, kind, title, status, event_id, created_at, updated_at, outcome, summary, not_before)
                 VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, ev.kind, `${ev.user_name ?? "?"}：${clip(ev.text, 60).replace(/\s+/g, " ")}`, skip ? "closed" : "queued", ev.id, at, at,
+      .run(id, ev.kind, `${ev.user_name ?? "?"}${t("：", ": ")}${clip(ev.text, 60).replace(/\s+/g, " ")}`, skip ? "closed" : "queued", ev.id, at, at,
         skip ? "skipped" : null, skip, skip ? null : hold);
     db.prepare("UPDATE events SET task_id = ? WHERE id = ?").run(id, ev.id);
     created += 1;

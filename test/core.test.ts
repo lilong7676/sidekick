@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { pickSlackMessages, type UnreadRich } from "../src/slack.ts";
 import { ENGINE_DENY, sessionFor, settle } from "../src/handle.ts";
 import { continueInClaude, processNow, slackPeople } from "../src/queries.ts";
 import { approvalLine } from "../src/notify.ts";
+import { setLang } from "../src/i18n.ts";
 import { Database } from "bun:sqlite";
 import { intakeSlack } from "../src/intake.ts";
 import type { Profile } from "../src/config.ts";
@@ -287,6 +288,20 @@ describe("the Slack DM to myself says what to do from the phone", () => {
   test("no draft: approve in the app; an operation: approve or deny in the app", () => {
     expect(approvalLine(reply({}), "t", "")).toContain("到菜单栏的 sidekick 里批准后发出");
     expect(approvalLine({ kind: "tool" as const, payload: JSON.stringify({ tool_name: "Bash", input: { command: "git push" } }) }, "t", "")).toContain("在菜单栏的 sidekick 里批准或拒绝");
+  });
+
+  describe("in English", () => {
+    afterEach(() => setLang("zh"));
+
+    test("the same lines, in English; the draft itself stays as written", () => {
+      setLang("en");
+      expect(approvalLine(reply({ draftId: "Dr1" }), "Bin: all fixed?", "https://x.slack.com/archives/D1/p1")).toBe(
+        "Reply to approve · Bin: all fixed?\n> 收到\n> 下午看\nThe draft is already in this conversation's message box: follow the link, edit it and send it. Not replying? Delete the draft.\nhttps://x.slack.com/archives/D1/p1",
+      );
+      expect(approvalLine(reply({}), "t", "")).toContain("approve it in sidekick in the menu bar to send it");
+      expect(approvalLine({ kind: "tool" as const, payload: JSON.stringify({ tool_name: "Bash", input: { command: "git push" } }) }, "t", ""))
+        .toBe('Action to approve · t\nBash {"command":"git push"}\nApprove or deny it in sidekick in the menu bar.');
+    });
   });
 });
 

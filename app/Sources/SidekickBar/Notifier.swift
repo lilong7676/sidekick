@@ -18,16 +18,24 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         super.init()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        let approve = UNNotificationAction(identifier: Self.approve, title: "批准", options: [])
-        let deny = UNTextInputNotificationAction(identifier: Self.deny, title: "拒绝…", options: [], textInputButtonTitle: "拒绝", textInputPlaceholder: "意见（可选，填了会让它重做）")
-        center.setNotificationCategories([
-            UNNotificationCategory(identifier: "SK_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
-            UNNotificationCategory(identifier: "SK_TASK", actions: [], intentIdentifiers: []),
-        ])
+        registerCategories()
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error { NSLog("sidekick: notification permission error: \(error)") }
             if !granted { NSLog("sidekick: notifications not allowed") }
         }
+    }
+
+    /// The approve / deny buttons, in the interface language: at launch, and again when it changes.
+    func registerCategories() {
+        let approve = UNNotificationAction(identifier: Self.approve, title: L("批准", "Approve"), options: [])
+        let deny = UNTextInputNotificationAction(
+            identifier: Self.deny, title: L("拒绝…", "Deny…"), options: [],
+            textInputButtonTitle: L("拒绝", "Deny"),
+            textInputPlaceholder: L("意见（可选，填了会让它重做）", "Feedback (optional; it will redo the work with it)"))
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: "SK_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "SK_TASK", actions: [], intentIdentifiers: []),
+        ])
     }
 
     private func markSeen(_ key: String) {
@@ -41,7 +49,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         for a in approvals where !seen.contains("a:\(a.id)") {
             markSeen("a:\(a.id)")
             let c = UNMutableNotificationContent()
-            c.title = a.kind == "outbound" ? "待审批：回复" : "待审批：操作"
+            c.title = a.kind == "outbound" ? L("待审批：回复", "To approve: reply") : L("待审批：操作", "To approve: action")
             c.subtitle = a.task_title ?? a.task_id
             c.body = a.kind == "outbound" ? (a.payload.text ?? "") : "\(a.payload.tool_name ?? "") \(a.payload.input?.command ?? "")"
             c.sound = .default
@@ -54,7 +62,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             if seen.contains(key) { continue }
             markSeen(key)
             let c = UNMutableNotificationContent()
-            c.title = t.status == "failed" ? "任务失败" : "要你看一下"
+            c.title = t.status == "failed" ? L("任务失败", "Task failed") : L("要你看一下", "Needs you")
             c.subtitle = t.title
             c.body = t.summary ?? ""
             c.sound = .default

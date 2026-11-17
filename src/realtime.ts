@@ -4,6 +4,7 @@
 // ships a new web build. So it is opt-in (settings.realtime), polling never stops, and when the
 // socket misbehaves the daemon drops back to polling only and tries the socket again later.
 
+import { t } from "./i18n.ts";
 import { startListener, type Listener, type ListenerOptions, type ListenerStatus } from "./listener.ts";
 import { clip, log } from "./util.ts";
 
@@ -24,7 +25,8 @@ export type RealtimeView =
   | { state: "off" }
   | { state: "connecting"; since: number; error?: string }
   | { state: "connected"; since: number }
-  | { state: "fallback"; since: number; reason: string; retryAt: number };
+  /** reason is display text in the language of the moment; fatal says which problem it was, for code. */
+  | { state: "fallback"; since: number; reason: string; retryAt: number; fatal?: Fatal };
 
 /** Everything the panel shows about Slack: the socket, and the polling that always runs. */
 export interface SlackStatus {
@@ -46,19 +48,26 @@ export interface Health {
   drops: number[];
   lastError: string;
   /** A problem reconnecting will not fix. */
-  fatal: string | null;
+  fatal: Fatal | null;
 }
 
 export const freshHealth = (now: number): Health => ({ connectedSince: null, downSince: now, drops: [], lastError: "", fatal: null });
 
-export const LOGIN_EXPIRED = "Slack 登录失效";
-export const FORCE_RELOAD = "Slack 不再接受 slackcli 用的网页版版本（force_reload）";
+/** Problems reconnecting will not fix. */
+export type Fatal = "login_expired" | "force_reload";
+
+/** How a fatal problem is put in the interface. */
+export function fatalText(f: Fatal): string {
+  return f === "login_expired"
+    ? t("Slack 登录失效", "Slack sign-in expired")
+    : t("Slack 不再接受 slackcli 用的网页版版本（force_reload）", "Slack no longer accepts the web app version slackcli uses (force_reload)");
+}
 
 /** Errors that reconnecting will not fix. */
-export function fatalReason(s: ListenerStatus): string | null {
+export function fatalReason(s: ListenerStatus): Fatal | null {
   if (s.type === "hello") return null;
-  if (s.type === "exit" && s.code === 2) return LOGIN_EXPIRED;
-  if (/force_reload/.test(s.error)) return FORCE_RELOAD;
+  if (s.type === "exit" && s.code === 2) return "login_expired";
+  if (/force_reload/.test(s.error)) return "force_reload";
   return null;
 }
 
@@ -78,11 +87,13 @@ export function observe(h: Health, s: ListenerStatus, now: number): Health {
 
 /** Why the socket should be given up on right now, or null while it is healthy enough. */
 export function fallbackReason(h: Health, now: number, p: Policy = POLICY): string | null {
-  if (h.fatal) return h.fatal;
-  const recent = h.drops.filter((t) => now - t < p.dropWindowMs).length;
-  if (recent >= p.drops) return `${p.dropWindowMs / 60_000} 分钟内断了 ${recent} 次`;
+  if (h.fatal) return fatalText(h.fatal);
+  const recent = h.drops.filter((d) => now - d < p.dropWindowMs).length;
+  const window = p.dropWindowMs / 60_000;
+  if (recent >= p.drops) return t(`${window} 分钟内断了 ${recent} 次`, `Dropped ${recent} times in ${window} min`);
   if (h.downSince !== null && now - h.downSince >= p.connectMs) {
-    return `${p.connectMs / 60_000} 分钟没连上${h.lastError ? `（${h.lastError}）` : ""}`;
+    const mins = p.connectMs / 60_000;
+    return t(`${mins} 分钟没连上${h.lastError ? `（${h.lastError}）` : ""}`, `Not connected for ${mins} min${h.lastError ? ` (${h.lastError})` : ""}`);
   }
   return null;
 }
@@ -173,7 +184,7 @@ export class Realtime {
     const reason = fallbackReason(this.health, now, this.policy);
     if (!reason) return;
     this.stopListener();
-    this.current = { state: "fallback", since: now, reason, retryAt: now + this.policy.retryMs };
+    this.current = { state: "fallback", since: now, reason, retryAt: now + this.policy.retryMs, ...(this.health.fatal ? { fatal: this.health.fatal } : {}) };
     log(`realtime: falling back to polling: ${reason}`);
     if (!this.announced) {
       this.announced = true;

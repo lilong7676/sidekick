@@ -17,7 +17,7 @@
 
 sidekick watches your Slack DMs and the messages that @-mention you. For each one, an agent running on [Claude Code](https://code.claude.com) decides whether you need to reply, checks the facts (it can read your code), and drafts the reply. You approve it in the panel, or edit and send it from Slack yourself.
 
-> The app's interface is in Chinese for now. Where this README names a place in the app, the Chinese label comes first, followed by its meaning.
+> The interface follows your Mac's language, English or Chinese; switch it at the top of Settings. What the agent writes for you (conclusions, reasons, summaries) is in Chinese for now, and its Slack replies follow the language of the conversation.
 
 ## How it works
 
@@ -28,12 +28,12 @@ an unread DM to you, or a message that @-mentions you
   → you approve it in the app, or edit and send it yourself in Slack → the card closes
 ```
 
-- **Approvals first.** By default every reply waits for you. Full auto mode (全托管) sends replies on its own, for when you're on leave or at lunch. It can switch on by schedule, and every auto-sent reply is copied to you.
+- **Approvals first.** By default every reply waits for you. Full auto mode sends replies on its own, for when you're on leave or at lunch. It can switch on by schedule, and every auto-sent reply is copied to you.
 - **Your persona.** Tell it who you are, what you own, how you talk, and what it must never promise for you. Don't want to write it by hand? Copy a prompt and let your own Claude Code interview you and write it from the replies you've corrected.
 - **Signed replies.** A grey line above each reply it sends says an assistant drafted it, and whether you had approved it.
 - **One conversation, one task.** Follow-ups in a thread or a DM join the same task and resume the same Claude session, with a single approval card per conversation.
 - **Rules before the agent runs, at no cost.** Skip certain people or channels; outside working hours, take messages in but work on them later.
-- **Hand over to yourself.** "Continue in Claude Code" (在 Claude Code 里继续) opens the task's session in your own Claude Code, in Terminal or in the Claude desktop app.
+- **Hand over to yourself.** "Continue in Claude Code" opens the task's session in your own Claude Code, in Terminal or in the Claude desktop app.
 - **Local.** The task ledger, your persona and your settings stay on your Mac.
 
 ## Install
@@ -48,37 +48,38 @@ Requirements: a Mac with Apple silicon (macOS 13 or later), [Claude Code](https:
 
 2. On launch the app installs the daemon as a LaunchAgent (`~/Library/LaunchAgents/local.sidekick.daemon.plist`), and macOS will say a background item was added. If the panel can't reach the daemon, open System Settings → General → Login Items, turn on sidekick under "Allow in the Background", and reopen Sidekick.
 3. Click ✨ in the menu bar and choose a folder as the workspace. The agent runs there and can read the code in it, so the parent folder of your repositories is a good choice. A folder without `sidekick/profile.yaml` gets a profile, a Slack workflow and a persona template.
-4. "Getting started" (开始用 sidekick) on the home page walks you through the rest:
+4. "Get started" on the home page walks you through the rest:
    - Sign in to Slack once, in a separate Chrome window that the button opens. It is not your everyday browser: Chrome won't let sidekick read the sign-in from your own profile. The window keeps the session, so when it expires, one click signs you in again.
    - Write your persona.
    - Allow notifications.
 
-   Then pick a past message and do a dry run (试跑) to see what it would have done.
+   Then pick a past message and do a "Dry run" to see what it would have done.
 
-If something is off, open 设置 → 诊断 (Settings → Diagnostics). Every failing check says how to fix it.
+If something is off, open Settings → Diagnostics. Every failing check says how to fix it.
 
 ### Upgrade
 
-When a new version is out, the panel shows 新版本 x (new version) at the top. Click it, then 升级 (Upgrade): Terminal reruns the install command, and the new version opens. Running tasks are queued again and resume within seconds. Rerunning the install command yourself does the same.
+When a new version is out, the panel shows "New version x" at the top. Click it, then "Upgrade": Terminal reruns the install command, and the new version opens. Running tasks are queued again and resume within seconds. Rerunning the install command yourself does the same.
 
 ## Using it
 
 Left-click ✨ for the panel; right-click for a separate window, restarting the daemon, and launch at login. Pending approvals show up as notifications you can approve or deny right there. The draft also waits in Slack's message box: send it from Slack, edited or not, or delete it, and the card in sidekick closes on its own.
 
-Slack is polled every 5 minutes. Realtime mode (设置 → Slack) handles new messages within seconds over Slack web's own websocket, and falls back to polling when that misbehaves.
+Slack is polled every 5 minutes. Realtime mode (Settings → Slack) handles new messages within seconds over Slack web's own websocket, and falls back to polling when that misbehaves.
 
 ### Settings
 
 <img src="docs/images/settings.png" width="400" alt="Settings: reply mode, the signature line and scheduled full auto; Slack connection, sign-in and realtime mode">
 
-In 设置 (Settings) you can:
+In Settings you can:
 
-- turn full auto on a schedule (定时全托管), e.g. 12:00–13:30 on weekdays;
-- turn the signature line off (回复带署名行);
-- set how long a conversation keeps its task (同一对话的新消息): a thread with no time limit and a DM for 2 hours by default;
-- set which messages to skip and the working hours (处理哪些消息);
-- set which notifications you get: macOS notifications, and a Slack DM to yourself that reaches your phone (通知);
-- choose where "Continue in Claude Code" opens: Terminal or the Claude desktop app (在 Claude Code 里继续).
+- switch the interface language: follow the system, 中文 or English (Language);
+- turn full auto on a schedule (Scheduled full auto), e.g. 12:00–13:30 on weekdays;
+- turn the signature line off (Signature line);
+- set how long a conversation keeps its task (Follow-ups in a conversation): a thread with no time limit and a DM for 2 hours by default;
+- set which messages to skip and the working hours (Which messages);
+- set which notifications you get: macOS notifications, and a Slack DM to yourself that reaches your phone (Notifications);
+- choose where "Continue in Claude Code" opens: Terminal or the Claude desktop app (Continue in Claude Code).
 
 The panel also opens in a browser at `http://127.0.0.1:47321`. The first time, paste the `token` from `~/.config/sidekick/runtime.json`.
 

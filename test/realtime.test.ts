@@ -1,11 +1,16 @@
-import { describe, expect, test } from "bun:test";
-import { AutoDoctor, type Check, type DoctorReport } from "../src/doctor.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { AutoDoctor, realtimeCheck, type Check, type DoctorReport } from "../src/doctor.ts";
 import type { ListenerOptions, ListenerStatus } from "../src/listener.ts";
-import { fallbackReason, FORCE_RELOAD, freshHealth, LOGIN_EXPIRED, observe, POLICY, Realtime } from "../src/realtime.ts";
+import { setLang } from "../src/i18n.ts";
+import { fallbackReason, freshHealth, observe, POLICY, Realtime, type SlackStatus } from "../src/realtime.ts";
+
+const LOGIN_EXPIRED = "Slack 登录失效";
+const FORCE_RELOAD = "Slack 不再接受 slackcli 用的网页版版本（force_reload）";
 
 const MIN = 60_000;
 
 describe("realtime fallback policy", () => {
+  afterEach(() => setLang("zh"));
   const hello: ListenerStatus = { type: "hello" };
   const drop: ListenerStatus = { type: "disconnected", error: "closed (code 1006)" };
 
@@ -47,6 +52,14 @@ describe("realtime fallback policy", () => {
     expect(fallbackReason(login, 1000)).toBe(LOGIN_EXPIRED);
     const reload = observe(freshHealth(0), { type: "disconnected", error: "slack error before hello: force_reload (code 1)" }, 1000);
     expect(fallbackReason(reload, 1000)).toBe(FORCE_RELOAD);
+  });
+
+  test("the reason is in the interface language", () => {
+    setLang("en");
+    const h = observe(freshHealth(0), { type: "disconnected", error: "socket error" }, 1000);
+    expect(fallbackReason(h, 3 * MIN)).toBe("Not connected for 3 min (socket error)");
+    const login = observe(freshHealth(0), { type: "exit", code: 2, error: "" }, 1000);
+    expect(fallbackReason(login, 1000)).toBe("Slack sign-in expired");
   });
 });
 
@@ -112,7 +125,7 @@ describe("Realtime", () => {
     h.rt.update(true);
     expect(h.started.length).toBe(2); // retried
     h.emit({ type: "exit", code: 2, error: "" });
-    expect(h.rt.view()).toMatchObject({ state: "fallback", reason: LOGIN_EXPIRED });
+    expect(h.rt.view()).toMatchObject({ state: "fallback", reason: LOGIN_EXPIRED, fatal: "login_expired" });
     expect(h.fallbacks.length).toBe(1); // the failed retry is the same episode
 
     // a retry that then stays up for 10 minutes ends the episode
@@ -135,6 +148,35 @@ describe("Realtime", () => {
     expect(h.started.length).toBe(2);
     old.onStatus({ type: "hello" });
     expect(h.rt.view().state).toBe("connecting");
+  });
+});
+
+describe("the realtime check in diagnostics", () => {
+  afterEach(() => setLang("zh"));
+  const status = (fatal?: "login_expired" | "force_reload"): SlackStatus => ({
+    enabled: true,
+    realtime: { state: "fallback", since: 0, reason: "whatever language it was written in", retryAt: new Date(2026, 10, 17, 16, 27).getTime(), ...(fatal ? { fatal } : {}) },
+    pollMinutes: 5,
+    collectingSince: null,
+    lastCollect: null,
+    nextCollectAt: null,
+  });
+
+  test("an expired sign-in is told by its code, not by its text, and says how to sign in", () => {
+    const zh = realtimeCheck(true, status("login_expired"), 0);
+    expect(zh).toMatchObject({ status: "fail", detail: "已回退轮询：whatever language it was written in；16:27 再试" });
+    expect(zh.fix).toContain("「登录 Slack」");
+    expect(zh.command).toContain("auth login-auto");
+    expect(realtimeCheck(true, status(), 0).status).toBe("warn");
+  });
+
+  test("in English", () => {
+    setLang("en");
+    const en = realtimeCheck(true, status("login_expired"), 0);
+    expect(en).toMatchObject({ status: "fail", detail: "Fell back to polling: whatever language it was written in; retrying at 16:27" });
+    expect(en.fix).toBe('In the panel, go to Settings → Slack and click "Sign in to Slack". From the command line, run this');
+    expect(realtimeCheck(false, undefined, 0).detail).toBe("Off, polling only");
+    expect(realtimeCheck(true, status("force_reload"), 0).fix).toContain("Upgrade the slackcli sidekick pins");
   });
 });
 
