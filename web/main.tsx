@@ -378,7 +378,7 @@ function GettingStarted({ doctorAt, onPersona }: { doctorAt?: number; onPersona:
   if (dismissed || !checks) return null;
   const ok = (id: string) => checks.find((c) => c.id === id)?.status === "ok";
   const steps = [
-    { id: "slack-login", label: "登录 Slack", hint: "sidekick 用你的身份读私信和 @ 你的消息。", action: <SlackLoginButton {...login} /> },
+    { id: "slack-login", label: "登录 Slack", hint: "sidekick 用你的身份读私信和 @ 你的消息。会单独开一个 Chrome 窗口（不是你平时的浏览器），在里面登录一次。", action: <SlackLoginButton {...login} /> },
     { id: "persona", label: "写分身", hint: "你是谁、负责什么、怎么回话；可以复制 prompt 交给你自己的 agent 写。", action: <button onClick={onPersona}>去写</button> },
     ...(isNative() ? [{ id: "app-notify", label: "允许通知", hint: "有回复等你批时弹通知。系统设置 → 通知 → Sidekick。", action: null }] : []),
   ];
@@ -734,7 +734,7 @@ function useSlackLogin() {
 }
 
 function SlackLoginButton({ job, start }: ReturnType<typeof useSlackLogin>) {
-  return <button disabled={job?.state === "running"} onClick={start}>{job?.state === "running" ? "等你在浏览器里登录…" : "登录 Slack"}</button>;
+  return <button disabled={job?.state === "running"} onClick={start}>{job?.state === "running" ? "等你在 Chrome 窗口里登录…" : "登录 Slack"}</button>;
 }
 
 const jobTone = (job: LoginJob | null) => (job?.state === "ok" ? "tone-good" : job?.state === "failed" ? "tone-bad" : "");
@@ -1032,7 +1032,7 @@ function Settings({ state, focus, onBack }: { state: State | null; focus: "top" 
           label="Slack 登录"
           hint={login.job && login.job.state !== "idle"
             ? <span class={jobTone(login.job)}>{login.job.message}</span>
-            : "用 slackcli 自己的浏览器配置登录。登录过期时再点一次，已经登录过的会自己完成。"}
+            : "会单独开一个 Chrome 窗口（不是你平时的浏览器；没装 Chrome 时用 Edge 或 Brave），在里面登录一次。以后登录过期再点，会自己完成。"}
         >
           <SlackLoginButton {...login} />
         </Row>

@@ -30,7 +30,7 @@ an unread DM to you, or a message that @-mentions you
 
 ## Install
 
-Requirements: a Mac with Apple silicon (macOS 13 or later), and [Claude Code](https://code.claude.com) installed and signed in (`~/.local/bin/claude`). You need neither Bun nor this repository: the daemon and slackcli are compiled into Sidekick.app.
+Requirements: a Mac with Apple silicon (macOS 13 or later), [Claude Code](https://code.claude.com) installed and signed in (`~/.local/bin/claude`), and Google Chrome (or Edge, or Brave) for signing in to Slack. You need neither Bun nor this repository: the daemon and slackcli are compiled into Sidekick.app.
 
 1. Run this in Terminal. It downloads the latest release, verifies it, puts Sidekick.app in Applications and opens it. Downloaded with curl, the app carries no quarantine flag, so macOS won't block it.
 
@@ -40,7 +40,7 @@ Requirements: a Mac with Apple silicon (macOS 13 or later), and [Claude Code](ht
 
 2. On launch the app installs the daemon as a LaunchAgent (`~/Library/LaunchAgents/local.sidekick.daemon.plist`), and macOS will say a background item was added. If the panel can't reach the daemon, open System Settings → General → Login Items, turn on sidekick under "Allow in the Background", and reopen Sidekick.
 3. Click ✨ in the menu bar and choose a folder as the workspace. The agent runs there and can read the code in it, so the parent folder of your repositories is a good choice. A folder without `sidekick/profile.yaml` gets a profile, a Slack workflow and a persona template.
-4. "Getting started" (开始用 sidekick) on the home page walks you through the rest: sign in to Slack (a button that opens a browser), write your persona, allow notifications. Then pick a past message and do a dry run (试跑) to see what it would have done.
+4. "Getting started" (开始用 sidekick) on the home page walks you through the rest: sign in to Slack once, in a separate Chrome window that the button opens (not your everyday browser: Chrome won't let sidekick read the tokens from your own profile), write your persona, allow notifications. Then pick a past message and do a dry run (试跑) to see what it would have done.
 
 If something is off, open 设置 → 诊断 (Settings → Diagnostics). Every failing check says how to fix it.
 
@@ -124,7 +124,7 @@ How it's put together: a Bun daemon (task ledger in SQLite, local HTTP API and t
 
 ### 安装
 
-前提：Apple 芯片的 Mac（macOS 13 起），[Claude Code](https://code.claude.com) 已安装并登录（`~/.local/bin/claude`）。不用装 Bun，也不用这个仓库：daemon 和 slackcli 都编进了 Sidekick.app。
+前提：Apple 芯片的 Mac（macOS 13 起），[Claude Code](https://code.claude.com) 已安装并登录（`~/.local/bin/claude`），装了 Google Chrome（或 Edge、Brave），登录 Slack 时要用。不用装 Bun，也不用这个仓库：daemon 和 slackcli 都编进了 Sidekick.app。
 
 1. 在终端运行这一行：下载最新版、校验、装进「应用程序」并打开。用 curl 下载的 app 不带隔离标记，不用再手动放行。
 
@@ -134,7 +134,7 @@ How it's put together: a Bun daemon (task ledger in SQLite, local HTTP API and t
 
 2. app 打开后会把 daemon 装成后台常驻（`~/Library/LaunchAgents/local.sidekick.daemon.plist`），macOS 会提示「已添加后台项目」。面板一直连不上的话，去 系统设置 → 通用 → 登录项，在「允许在后台」里打开 sidekick，再重新打开 Sidekick。
 3. 点菜单栏的 ✨，选一个文件夹当工作区：agent 在这里运行，能读里面的代码，建议选放代码仓库的上一级目录。没有 `sidekick/profile.yaml` 的文件夹，会按模板建好 profile、处理 Slack 的流程和分身。
-4. 主页上的「开始用 sidekick」会带你做完剩下几步：登录 Slack（点按钮，会打开浏览器）、写分身、允许通知。写完挑一条历史消息「试跑」看效果。
+4. 主页上的「开始用 sidekick」会带你做完剩下几步：登录 Slack（点按钮会单独开一个 Chrome 窗口，不是你平时的浏览器，因为 Chrome 不允许读你日常配置里的登录信息；在里面登录一次就行）、写分身、允许通知。写完挑一条历史消息「试跑」看效果。
 
 有问题去「设置 → 诊断」，每一项不通过都写了怎么修。
 

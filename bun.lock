@@ -7,7 +7,7 @@
       "dependencies": {
         "@modelcontextprotocol/sdk": "1.32.2",
         "preact": "11.2.0",
-        "slackcli": "github:lilong7676/slackcli#502f6923db1ceb6d3c4e136adfb0a1cd19dcaea9",
+        "slackcli": "github:lilong7676/slackcli#72762969ffe4288abdfd80aa3eff0f92b73fe92e",
         "zod": "4.6.7",
       },
       "devDependencies": {
@@ -309,7 +309,7 @@
 
     "signal-exit": ["signal-exit@4.1.0", "", {}, "sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw=="],
 
-    "slackcli": ["slackcli@github:lilong7676/slackcli#502f692", { "dependencies": { "@logtape/file": "2.3.6", "@logtape/logtape": "2.3.6", "@logtape/redaction": "2.3.6", "@slack/web-api": "^7.15.2", "chalk": "^5.3.0", "commander": "^12.1.0", "ora": "^8.1.1" }, "bin": { "slackcli": "src/index.ts" } }, "lilong7676-slackcli-502f692", "sha512-60Hy71YYs/TG51VrZo5Lrc9gxZSC0kXvEkDzNSmnMYVpKS8JD2HT6Lg9PrqAo3VMJxPJZGxUGKA+cTcUA/Pxag=="],
+    "slackcli": ["slackcli@github:lilong7676/slackcli#7276296", { "dependencies": { "@logtape/file": "2.3.6", "@logtape/logtape": "2.3.6", "@logtape/redaction": "2.3.6", "@slack/web-api": "^7.15.2", "chalk": "^5.3.0", "commander": "^12.1.0", "ora": "^8.1.1" }, "bin": { "slackcli": "src/index.ts" } }, "lilong7676-slackcli-7276296", "sha512-PRdzoopDxnarIopg64rKa5y6EDUtzTCmwZJdzOsvvtIo9FZDiH1++JS4GHZoPHfNuIou5owbflDkEWVjympCnw=="],
 
     "statuses": ["statuses@2.0.2", "", {}, "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw=="],
 

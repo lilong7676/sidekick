@@ -118,7 +118,7 @@ new → queued → running ─┬→ done / closed
 | Jira | `acli jira workitem search --jql '<profile jql> AND updated >= "<上次>"' --json`，命中的单再用 `view` / `comment list` 看变了什么 | key + 最新评论 id + 状态 | acli 已 OAuth 登录。search 的 JSON 不带 updated 字段，所以靠 JQL 的时间窗 + 二次查询 |
 | 手动 | app 输入框，或 `sidekick add "<文字或链接>"` | 无 | 一期测试主要靠它 |
 
-**实时：`slackcli listen`**（2026-11-13，2026-11-16 改成可选）。开了实时模式时，daemon 常驻一个 `slackcli listen` 子进程。listen 连的是 Slack 网页版自己用的事件 websocket，移植自 slk（github.com/luoxiu/slk），已推到我的 fork lilong7676/slackcli 的 `feat/listen` 分支。sidekick 在 package.json 里把 slackcli 锁到这个 commit（`502f692`），daemon 和 agent 都通过 `bin/slackcli` 调用这一份，不依赖机器上装的版本，方便同事装。
+**实时：`slackcli listen`**（2026-11-13，2026-11-16 改成可选）。开了实时模式时，daemon 常驻一个 `slackcli listen` 子进程。listen 连的是 Slack 网页版自己用的事件 websocket，移植自 slk（github.com/luoxiu/slk），已推到我的 fork lilong7676/slackcli 的 `feat/listen` 分支。sidekick 在 package.json 里把 slackcli 锁到这个分支上的一个 commit（具体是哪个以 package.json 为准），daemon 和 agent 都通过 `bin/slackcli` 调用这一份，不依赖机器上装的版本，方便同事装。
 
 - **触发**：别人私信我、或 @ 我的新消息一到，去抖 2 秒后立刻跑一次采集，把 daemon 主循环提前唤醒。断线重连后补采一次。轮询（`pollMinutes`）保留，兜底用。
 - **实测**：一条真实私信从发出到任务开始处理约 20 秒，原来最长 5 分钟。其中约 17 秒耗在 `conversations unread` 上。以后可以直接拿 socket 推来的消息建任务，能压到几秒。

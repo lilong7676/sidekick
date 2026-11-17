@@ -15,7 +15,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
     "preact": "11.2.0",
-    "slackcli": "github:lilong7676/slackcli#502f6923db1ceb6d3c4e136adfb0a1cd19dcaea9",
+    "slackcli": "github:lilong7676/slackcli#72762969ffe4288abdfd80aa3eff0f92b73fe92e",
     "zod": "4.6.7"
   },
   "devDependencies": {

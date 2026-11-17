@@ -38,4 +38,20 @@ describe("signing in to Slack from the panel", () => {
     expect(login.view()).toMatchObject({ state: "failed", message: "没登录成功：Timed out after 300s waiting for sign-in" });
     expect(login.start().state).toBe("running"); // and it can be tried again
   });
+
+  test("a Mac with no Chromium-family browser is told what to install, in Chinese", async () => {
+    const c = controlled();
+    const login = new SlackLogin(() => {}, c.run);
+    login.start();
+    c.finish({
+      code: 1,
+      stdout: "",
+      stderr: "✖ No Chrome, Edge, Chromium, or Brave installation found.\n   Install one, or point SLACKCLI_BROWSER at the executable.\n",
+    });
+    await settle();
+    expect(login.view()).toMatchObject({
+      state: "failed",
+      message: "没登录成功：没找到 Chrome、Edge 或 Brave。登录 Slack 要用其中一个单独开窗口，装一个再点。",
+    });
+  });
 });
