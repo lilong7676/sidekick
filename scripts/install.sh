@@ -20,12 +20,18 @@ die() { printf 'sidekick 安装：%s\n' "$*" >&2; exit 1; }
 
 tag="${SIDEKICK_VERSION:-}"
 if [ -z "${tag}" ]; then
-  # Newest first, prereleases included (/releases/latest skips them).
+  # The releases feed on github.com, newest first, prereleases included (/releases/latest skips them).
+  # Not the API: unauthenticated it allows 60 calls an hour per IP, an office behind one proxy shares
+  # them, and installs failed with 403. Each entry links its release as …/releases/tag/<tag>.
   # awk reads it all: an early-exiting grep would SIGPIPE curl, and pipefail would call that a failure.
-  tag="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=1" | awk -F'"' '/"tag_name"/ && !found { print $4; found = 1 }')" ||
+  tag="$(curl -fsSL "https://github.com/${REPO}/releases.atom" |
+    awk -F'/releases/tag/' '/rel="alternate"/ && NF > 1 && !found { split($2, t, "\""); print t[1]; found = 1 }')" ||
     die "查不到最新版本（网络不通，或者仓库还没公开）。"
 fi
 [ -n "${tag}" ] || die "查不到最新版本。"
+# The tag goes into URLs and file names, so it must look like one of ours.
+version_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+[[ "${tag}" =~ ${version_re} ]] || die "版本号不对：${tag}"
 
 installed=""
 if [ -d "${APP}" ]; then

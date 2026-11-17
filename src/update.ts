@@ -1,5 +1,8 @@
 // Is there a newer Sidekick? The daemon asks GitHub Releases now and then (betas included, like the
 // install script), and the panel offers the upgrade: the same one-line install, run again.
+//
+// It reads the releases feed on github.com, not the API. Unauthenticated, the API allows 60 calls an
+// hour per IP; an office behind one proxy shares them, and both this check and the install got 403.
 
 import { log, VERSION } from "./util.ts";
 
@@ -32,16 +35,29 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-type Fetch = (url: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>;
+type Fetch = (url: string) => Promise<{ ok: boolean; text: () => Promise<string> }>;
+
+/**
+ * Release tags in GitHub's releases feed. Each entry links its release with a real `href="…"`; links
+ * inside release notes are escaped (`&quot;`), so they never match.
+ */
+export function tagsFromFeed(atom: string): string[] {
+  const link = /href="https:\/\/github\.com\/[^/"]+\/[^/"]+\/releases\/tag\/(v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)"/g;
+  return [...atom.matchAll(link)].map((m) => m[1]);
+}
 
 /** The newest release if it is newer than this one; null when up to date or GitHub cannot say. */
 export async function checkForUpdate(current = VERSION, get: Fetch = (url) => fetch(url, { headers: { "User-Agent": "sidekick" }, signal: AbortSignal.timeout(15_000) })): Promise<UpdateInfo | null> {
   try {
-    const res = await get(`https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=1`);
+    const res = await get(`https://github.com/${RELEASES_REPO}/releases.atom`);
     if (!res.ok) return null; // e.g. the repository is not public (yet)
-    const [latest] = (await res.json()) as Array<{ tag_name?: string; html_url?: string }>;
-    if (!latest?.tag_name) return null;
-    return compareVersions(latest.tag_name, current) > 0 ? { version: latest.tag_name.replace(/^v/, ""), url: latest.html_url ?? "" } : null;
+    const tags = tagsFromFeed(await res.text());
+    if (!tags.length) return null;
+    // The feed lists the newest first; taking the highest does not depend on that.
+    const latest = tags.reduce((a, b) => (compareVersions(b, a) > 0 ? b : a));
+    return compareVersions(latest, current) > 0
+      ? { version: latest.slice(1), url: `https://github.com/${RELEASES_REPO}/releases/tag/${latest}` }
+      : null;
   } catch (e) {
     log(`update: check failed: ${String(e).slice(0, 200)}`);
     return null;
