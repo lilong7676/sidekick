@@ -4,6 +4,7 @@
 
 import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Profile } from "./config.ts";
 import { CLAUDE, cleanEnv, SELF } from "./util.ts";
 
 export interface LaunchSpec {
@@ -22,7 +23,11 @@ export interface LaunchSpec {
   guardPolicyPath?: string;
   /** Wire the sidekick MCP server (approve / propose / report) into the run. */
   /** `mode`: the one the run started in, which decides whether its reply goes out unseen (mcp.ts). */
-  sidekickMcp?: { dbPath: string; taskId: string; runId: string; waitMs: number; profileRoot: string; mode: "semi" | "full" };
+  sidekickMcp?: {
+    dbPath: string; taskId: string; runId: string; waitMs: number; profileRoot: string; mode: "semi" | "full";
+    /** profile.yaml autoReply: replies that need no approval (mcp.ts autoReplyAllowed). */
+    autoReply?: Profile["autoReply"];
+  };
   appendSystemPrompt?: string;
   addDirs?: string[];
   timeoutMs: number;
@@ -37,6 +42,29 @@ export interface RunResult {
   turns: number | null;
   denials: Array<{ tool_name: string; tool_use_id: string; tool_input: unknown }>;
   timedOut: boolean;
+  /** Stopped because Claude only kept retrying the API (apiStall): try again later, not a failure. */
+  apiStalled: boolean;
+}
+
+/** How long a run may only retry the API before it is stopped. */
+export const API_STALL_MS = 5 * 60_000;
+
+/**
+ * Claude retrying the API with nothing else happening: offline, asleep, or an outage. Such a run used
+ * to sit out the whole timeout, three times over: three overnight tasks lost about two hours each
+ * (2026-11-18). Any other event means it is getting somewhere.
+ */
+export function apiStall(now = () => Date.now()) {
+  let since: number | null = null;
+  return {
+    see(ev: { type?: string; subtype?: string }): void {
+      if (ev.type === "system" && ev.subtype === "api_retry") since ??= now();
+      else if (ev.type !== "system") since = null;
+    },
+    stalledFor(): number {
+      return since === null ? 0 : now() - since;
+    },
+  };
 }
 
 /** ask rules plus the guard hook, as one --settings JSON (hooks run before rules). */
@@ -115,6 +143,7 @@ export function writeMcpConfig(dir: string, runId: string, mcp: NonNullable<Laun
           SIDEKICK_WAIT_MS: String(mcp.waitMs),
           SIDEKICK_PROFILE_ROOT: mcp.profileRoot,
           SIDEKICK_MODE: mcp.mode,
+          SIDEKICK_AUTO_REPLY: JSON.stringify(mcp.autoReply ?? []),
         },
       },
     },
@@ -136,6 +165,11 @@ export function startRun(spec: LaunchSpec, prompt: string, session: { id: string
   const out = createWriteStream(logPath, { flags: "a" });
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; proc.kill("SIGTERM"); }, spec.timeoutMs);
+  const stall = apiStall();
+  let apiStalled = false;
+  const watch = setInterval(() => {
+    if (!apiStalled && stall.stalledFor() > API_STALL_MS) { apiStalled = true; proc.kill("SIGTERM"); }
+  }, 15_000);
 
   const done = (async (): Promise<RunResult> => {
     let result: Record<string, any> | null = null;
@@ -155,6 +189,7 @@ export function startRun(spec: LaunchSpec, prompt: string, session: { id: string
           const ev = JSON.parse(line);
           if (ev.type === "system" && ev.subtype === "init") sessionId = ev.session_id ?? sessionId;
           if (ev.type === "result") result = ev;
+          stall.see(ev);
         } catch {
           // Unknown or partial lines stay in the log; parsing is deliberately lenient.
         }
@@ -164,6 +199,7 @@ export function startRun(spec: LaunchSpec, prompt: string, session: { id: string
     if (stderr.trim()) out.write(JSON.stringify({ type: "sidekick_stderr", text: stderr.slice(-4000) }) + "\n");
     const exitCode = await proc.exited;
     clearTimeout(timer);
+    clearInterval(watch);
     out.end();
     return {
       exitCode,
@@ -174,6 +210,7 @@ export function startRun(spec: LaunchSpec, prompt: string, session: { id: string
       turns: typeof result?.num_turns === "number" ? result.num_turns : null,
       denials: Array.isArray(result?.permission_denials) ? result.permission_denials : [],
       timedOut,
+      apiStalled,
     };
   })();
 

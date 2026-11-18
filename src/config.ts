@@ -54,6 +54,16 @@ const ProfileSchema = z.object({
     waitMinutes: z.number().positive().default(5),
   }),
   /**
+   * Replies that go out without my approval: to a message from one of `from` (Slack user ids U…/W…,
+   * or user group ids S…), when the reply is exactly one of `texts`. For routine answers I have said
+   * need no review, e.g. 「已 approve ✅」 after approving a teammate's PR. Checked in code (mcp.ts
+   * autoReplyAllowed), not left to the agent.
+   */
+  autoReply: z.array(z.object({
+    from: z.array(z.string().regex(/^[UWS][A-Z0-9]+$/)).min(1),
+    texts: z.array(z.string().trim().min(1).max(200)).min(1),
+  })).default([]),
+  /**
    * The persona (分身) files, relative to the root: who I am, what I own, how I talk, what must never
    * be promised for me. Put into every run's system prompt; edited from the panel.
    */

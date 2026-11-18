@@ -149,7 +149,7 @@ export interface Run {
 }
 
 export interface EventRow {
-  id: number; kind: string; channel_name: string | null; user_name: string | null; text: string | null;
+  id: number; kind: string; channel_name: string | null; user_id: string | null; user_name: string | null; text: string | null;
   received_at: number;
 }
 

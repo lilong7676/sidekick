@@ -69,6 +69,9 @@ export const DELETED_IN_SLACK = "draft deleted in Slack";
 
 /** Marks replies the daemon approved on its own in full mode, so they can be reported back to me. */
 export const AUTO_NOTE = "全托管自动发送";
+/** decision_note of a reply a profile.yaml autoReply rule let out without me (mcp.ts). Compared, never translated. */
+export const RULE_NOTE = "按规则自动发送";
+const unseen = (note: string | null) => note === AUTO_NOTE || note === RULE_NOTE;
 
 /**
  * Act on every decided-but-unhandled approval. Runs in the daemon loop.
@@ -124,7 +127,7 @@ export async function processDecisions(
           if (opts.sign) {
             // A draft is plain text and cannot carry the signature: it goes, and the reply is posted signed.
             if (payload.draftId && !gone) await sender.deleteDraft(payload.draftId);
-            await sender.sendMessage(payload.channel, payload.threadTs ?? null, body, replyBlocks(body, a.decision_note === AUTO_NOTE));
+            await sender.sendMessage(payload.channel, payload.threadTs ?? null, body, replyBlocks(body, unseen(a.decision_note)));
           } else if (payload.draftId && !gone && !edited) await sender.sendDraft(payload.draftId);
           else {
             if (payload.draftId && !gone) await sender.deleteDraft(payload.draftId);
@@ -132,7 +135,7 @@ export async function processDecisions(
           }
           db.prepare("UPDATE approvals SET status = 'executed', result = 'executed: sent' WHERE id = ?").run(a.id);
           if (task && !hasPending(db, a.task_id)) setTaskStatus(db, a.task_id, "done", { outcome: "replied" });
-          log(`approvals: ${a.id} sent for ${a.task_id}${a.decision_note === AUTO_NOTE ? " (full mode)" : ""}`);
+          log(`approvals: ${a.id} sent for ${a.task_id}${a.decision_note === AUTO_NOTE ? " (full mode)" : a.decision_note === RULE_NOTE ? " (by a rule)" : ""}`);
           try {
             await onSent?.(a, edited ? payload.editedText : payload.text);
           } catch (e) {

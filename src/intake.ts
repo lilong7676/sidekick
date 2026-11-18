@@ -56,6 +56,36 @@ function skipReason(ev: EventRow, rules: IntakeRules): string | null {
   return null;
 }
 
+/**
+ * A conversation's run waits this long after its latest message, so a burst ("怎么回事~", "哈哈",
+ * "你慢慢搞" within a minute) is one run, not three. Each run resumes the conversation's session and
+ * re-reads all of it, so every extra one cost more than the last ($0.43 → $1.89, 2026-11-18).
+ */
+export const QUIET_MS = 60_000;
+
+/** Not before the conversation has been quiet for QUIET_MS, nor before working hours (`hold`). */
+function quietUntil(ev: EventRow, hold: number | null, now = Date.now()): number | null {
+  const quiet = Number(ev.ts) * 1000 + QUIET_MS;
+  const at = Math.max(hold ?? 0, quiet > now ? quiet : 0);
+  return at > 0 ? at : null;
+}
+
+/**
+ * A message that only closes a conversation: thanks, ok, a laugh, an emoji. In a conversation that is
+ * already handled it is kept with the task but not worked on again; the agent always found no reply
+ * was needed, and each such run still cost $0.4–1.9 (2026-11-18).
+ */
+export function isClosing(text: string | null): boolean {
+  const s = (text ?? "")
+    .replace(/<@[A-Z0-9]+>/g, "")
+    .replace(/:[a-z0-9_+'-]+:/gi, "")
+    .replace(/[\s.,!?~。，！？～…、]+/g, "")
+    .replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu, "")
+    .toLowerCase();
+  if (!s) return true; // only emoji or mentions
+  return /^(好|好的|好滴|好嘞|好哒|好了|嗯+|哦+|噢+|ok+|okay|欧克|收到|了解|明白|知道了|谢谢|谢啦|多谢|感谢|辛苦|辛苦了|thx|thanks|thankyou|ty|哈+|h+a+|nice|cool|牛|棒)$/.test(s);
+}
+
 /** Still at work: a new message in its conversation always joins. */
 const OPEN = ["queued", "running"];
 /** Settled, but the conversation may go on: a new message joins within the window and reopens it. */
@@ -107,7 +137,7 @@ export function intakeSlack(db: Database, rules: IntakeRules = rulesFromSettings
     db.prepare(`INSERT INTO tasks (id, source, kind, title, status, event_id, created_at, updated_at, outcome, summary, not_before)
                 VALUES (?, 'slack', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(id, ev.kind, `${ev.user_name ?? "?"}${t("：", ": ")}${clip(ev.text, 60).replace(/\s+/g, " ")}`, skip ? "closed" : "queued", ev.id, at, at,
-        skip ? "skipped" : null, skip, skip ? null : hold);
+        skip ? "skipped" : null, skip, skip ? null : quietUntil(ev, hold, at));
     db.prepare("UPDATE events SET task_id = ? WHERE id = ?").run(id, ev.id);
     created += 1;
   }
@@ -121,6 +151,15 @@ export function intakeSlack(db: Database, rules: IntakeRules = rulesFromSettings
  */
 function followUp(db: Database, taskId: string, ev: EventRow, hold: number | null): void {
   const task = getTask(db, taskId)!;
+  if (!OPEN.includes(task.status) && isClosing(ev.text)) {
+    db.prepare("UPDATE events SET task_id = ? WHERE id = ?").run(taskId, ev.id);
+    log(`intake: ${taskId} closing message kept, not worked on`);
+    return;
+  }
+  if (task.status === "queued") {
+    // Still waiting for the conversation to go quiet: wait for this message too.
+    db.prepare("UPDATE tasks SET not_before = ? WHERE id = ?").run(quietUntil(ev, Math.max(hold ?? 0, task.not_before ?? 0) || null), taskId);
+  }
   const lines = [`这个对话里又来了一条新消息（${ev.user_name ?? "?"}，ts ${ev.ts}）：${clip(ev.text, 600)}`];
   if (!OPEN.includes(task.status)) {
     const waiting = db.prepare("SELECT 1 FROM approvals WHERE task_id = ? AND kind = 'outbound' AND status = 'pending'").get(taskId);
@@ -134,6 +173,6 @@ function followUp(db: Database, taskId: string, ev: EventRow, hold: number | nul
   if (!OPEN.includes(task.status)) {
     // Back to work; and if it comes back needing me, that is news again.
     db.prepare("UPDATE tasks SET notified_status = NULL WHERE id = ?").run(taskId);
-    setTaskStatus(db, taskId, "queued", { not_before: hold }); // after hours, it waits for the morning
+    setTaskStatus(db, taskId, "queued", { not_before: quietUntil(ev, hold) }); // after hours, it waits for the morning
   }
 }

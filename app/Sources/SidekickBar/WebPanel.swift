@@ -192,7 +192,7 @@ enum Terminal {
         s.range(of: "^[0-9a-fA-F-]{36}$", options: .regularExpression) != nil
     }
 
-    /// 「在 Claude Code 里继续」: a fork of the session, so mine and sidekick's never share a file. Built
+    /// 「在 Claude 里继续」: a fork of the session, so mine and sidekick's never share a file. Built
     /// here from a session id and a name rather than taken as a command, so the page cannot add to it.
     static func continueSession(cwd: String, session: String, name: String?) {
         guard isSession(session) else {

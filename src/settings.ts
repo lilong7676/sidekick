@@ -3,7 +3,7 @@
 //
 //   settings.json   mode (semi / full), model, effort,    — read on every tick / run, no restart
 //                   realtime, pollMinutes, how long a conversation keeps its task (thread / DM),
-//                   where 「在 Claude Code 里继续」 opens, notifications (macOS / Slack DM to me),
+//                   where 「在 Claude 里继续」 opens, notifications (macOS / Slack DM to me),
 //                   what not to work on (people, channels, off-hours), full mode on a timetable
 //   config.yaml     the workspace folder (profile root)  — needs a daemon restart
 
@@ -42,7 +42,7 @@ const SettingsSchema = z.object({
   threadMergeHours: MergeHours.default(null),
   dmMergeHours: MergeHours.default(2),
   /**
-   * Where 「在 Claude Code 里继续」 opens a task's conversation (queries.ts continueInClaude). terminal:
+   * Where 「在 Claude 里继续」 opens a task's conversation (queries.ts continueInClaude). terminal:
    * a fork of sidekick's session, in Terminal. desktop: sidekick's own session, in the Claude desktop
    * app, which cannot fork (claude refuses --desktop with --fork-session).
    */

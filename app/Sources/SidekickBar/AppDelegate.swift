@@ -216,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 await MainActor.run {
                     self.setBadge(state.attention ?? 0, online: true)
                     self.notifier.announce(approvals: approvals, tasks: tasks, show: state.notifyMacos ?? true)
+                    self.notifier.announceDeleted(state.draftsDeleted ?? [], show: state.notifyMacos ?? true)
                 }
             } catch {
                 await MainActor.run { self.setBadge(0, online: false) }

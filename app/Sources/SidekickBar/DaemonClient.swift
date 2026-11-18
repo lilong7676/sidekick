@@ -18,6 +18,22 @@ struct DaemonState: Decodable {
     let notifyMacos: Bool?
     /** Interface language the daemon resolved: "zh" or "en" (Lang.swift). */
     let lang: String?
+    /** Reply drafts I deleted in Slack lately (queries.ts recentlyDeletedDrafts): offer to carry on in Claude. */
+    let draftsDeleted: [DeletedDraft]?
+}
+
+struct DeletedDraft: Decodable {
+    let approvalId: String
+    let taskId: String
+    let title: String
+}
+
+/** POST /api/tasks/:id/continue (queries.ts continueInClaude): the desktop app is opened by the daemon; Terminal is ours. */
+struct Continued: Decodable {
+    let `where`: String
+    let cwd: String
+    let session: String
+    let name: String?
 }
 
 struct ApprovalItem: Decodable {
@@ -93,6 +109,10 @@ final class DaemonClient {
     func attentionTasks() async throws -> [TaskItem] { try await get("/api/tasks?filter=attention", as: [TaskItem].self) }
 
     func approve(_ id: String) async throws { try await post("/api/approvals/\(id)/approve") }
+
+    func continueTask(_ id: String) async throws -> Continued {
+        try JSONDecoder().decode(Continued.self, from: try await request("/api/tasks/\(id)/continue", method: "POST", body: [:]))
+    }
 
     func deny(_ id: String, note: String?) async throws {
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

@@ -16,7 +16,7 @@ import type { AutoDoctor, DoctorReport } from "./doctor.ts";
 import { MAX_PERSONA_CHARS, PERSONA_TEMPLATE, PersonaConflict, readPersona, refinePrompt, writePersona } from "./persona.ts";
 import type { SlackStatus } from "./realtime.ts";
 import { trialSamples, type Trials } from "./trial.ts";
-import { addManualTask, cancel, clearFinished, continueInClaude, deleteTask, processNow, slackPeople, fingerprint, handback, listTasks, parseLogLine, pendingApprovals, readRunLog, stateSummary, takeover, taskDetail, type TaskFilter } from "./queries.ts";
+import { addManualTask, cancel, clearFinished, continueInClaude, deleteTask, processNow, slackPeople, fingerprint, handback, listTasks, parseLogLine, pendingApprovals, readRunLog, recentlyDeletedDrafts, stateSummary, takeover, taskDetail, type TaskFilter } from "./queries.ts";
 import { EFFORTS, loadSettings, MODELS, readEngineConfig, updateSettings } from "./settings.ts";
 import { SUGGESTED_ROOT, useWorkspace } from "./setup.ts";
 import type { SlackLogin } from "./slacklogin.ts";
@@ -243,7 +243,7 @@ export function startServer(deps: ServerDeps): Served {
   return launch(deps, (authed) => ({
     "/": index,
     "/api/state": {
-      GET: authed(() => json({ profile: profile.name, version: VERSION, lang: lang(), notifyMacos: loadSettings(deps.settingsFile).notifyMacos ?? profile.notify.macos, ...stateSummary(db), ...live() })),
+      GET: authed(() => json({ profile: profile.name, version: VERSION, lang: lang(), notifyMacos: loadSettings(deps.settingsFile).notifyMacos ?? profile.notify.macos, ...stateSummary(db), draftsDeleted: recentlyDeletedDrafts(db), ...live() })),
     },
     "/api/tasks": {
       GET: authed((req) => {

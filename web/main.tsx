@@ -150,8 +150,11 @@ function decisionLabel(a: Approval): string {
   return a.status;
 }
 
-/** A decision note is what the person wrote, except the one full mode stores (approvals.ts AUTO_NOTE, compared as is there). */
-const decisionNote = (note: string) => (note === "全托管自动发送" ? t("全托管自动发送", "Sent by Full auto") : note);
+/** A decision note is what the person wrote, except the ones sidekick stores itself (approvals.ts AUTO_NOTE, RULE_NOTE, compared as is there). */
+const decisionNote = (note: string) =>
+  note === "全托管自动发送" ? t("全托管自动发送", "Sent by Full auto")
+  : note === "按规则自动发送" ? t("按规则自动发送", "Sent by a rule")
+  : note;
 
 function ApprovalCard({ a, onDone }: { a: Approval; onDone: () => void }) {
   const original: string = a.kind === "outbound" ? String(a.payload.text ?? "") : "";
@@ -326,7 +329,11 @@ function TaskDetail({ id, tick, onBack }: { id: string; tick: number; onBack: ()
       {task.summary && <div class="summary"><span class="muted small">{t(`结论${task.outcome ? `（${task.outcome}）` : ""}`, `Conclusion${task.outcome ? ` (${task.outcome})` : ""}`)}</span><div>{task.summary}</div></div>}
       {task.status === "queued" && task.not_before && task.not_before > Date.now() && (
         <div class="actions">
-          <span class="muted small">{t(`下班时间进来的，${clock(task.not_before)} 开始处理。`, `Arrived outside working hours: starts at ${clock(task.not_before)}.`)}</span>
+          <span class="muted small">{d.runs.at(-1)?.error === "api unavailable"
+            ? t(`上次连不上 Claude（断网或电脑睡眠），${clock(task.not_before)} 再试。`, `Could not reach Claude last time (offline or asleep); trying again at ${clock(task.not_before)}.`)
+            : task.not_before - Date.now() <= 2 * 60_000
+            ? t("等对话停一分钟再处理，连着发的几条一起看。", "Waits a minute for the conversation to go quiet, so a burst is handled at once.")
+            : t(`下班时间进来的，${clock(task.not_before)} 开始处理。`, `Arrived outside working hours: starts at ${clock(task.not_before)}.`)}</span>
           <button onClick={() => act("process")}>{t("现在处理", "Process now")}</button>
         </div>
       )}
@@ -341,9 +348,9 @@ function TaskDetail({ id, tick, onBack }: { id: string; tick: number; onBack: ()
         {task.session_id && task.status !== "running" && (
           <button
             onClick={() => act("continue")}
-            title={t("带着 sidekick 这个会话的全部上下文，在你自己的 Claude Code 里接着做；sidekick 这边不暂停、不用交还", "Pick up in your own Claude Code with all the context of sidekick's session. sidekick does not pause, and there is nothing to hand back.")}
+            title={t("带着 sidekick 这个会话的全部上下文，在你自己的 Claude 里接着做（终端或桌面 app，设置里选）；sidekick 这边不暂停、不用交还", "Pick up in your own Claude, in Terminal or the desktop app (see Settings), with all the context of sidekick's session. sidekick does not pause, and there is nothing to hand back.")}
           >
-            {t("在 Claude Code 里继续", "Continue in Claude Code")}
+            {t("在 Claude 里继续", "Continue in Claude")}
           </button>
         )}
         {task.session_id && task.status !== "running" && task.status !== "paused" && open && (
@@ -371,7 +378,8 @@ function TaskDetail({ id, tick, onBack }: { id: string; tick: number; onBack: ()
       {d.events.length > 0 && <h3>{t("消息", "Messages")}</h3>}
       {d.events.map((e) => (
         <div key={e.id} class="card">
-          <div class="card-head"><strong>{e.user_name ?? "?"}</strong><span class="muted">{e.channel_name ?? ""} · {ago(e.received_at)}</span></div>
+          {/* A Slack link given with a task by hand (queries.ts addManualTask) has no sender. */}
+          <div class="card-head"><strong>{e.user_name ?? (e.user_id ? "?" : t("你给的链接", "Your link"))}</strong><span class="muted">{e.channel_name ?? ""} · {ago(e.received_at)}</span></div>
           <div class="quote">{e.text}</div>
         </div>
       ))}
@@ -1276,7 +1284,7 @@ function Settings({ state, focus, onBack, onLangChanged }: { state: State | null
         </Row>
       </Group>
 
-      <Group title={t("在 Claude Code 里继续", "Continue in Claude Code")} note={noteFor("continue")}>
+      <Group title={t("在 Claude 里继续", "Continue in Claude")} note={noteFor("continue")}>
         <Row
           label={t("打开方式", "Open in")}
           hint={s.continueIn === "terminal"

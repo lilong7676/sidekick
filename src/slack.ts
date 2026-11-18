@@ -62,6 +62,21 @@ export function permalink(me: Me, channel: string, ts: string, threadTs?: string
   return threadTs && threadTs !== ts ? `${base}?thread_ts=${threadTs}&cid=${channel}` : base;
 }
 
+export interface SlackLink { url: string; channel: string; ts: string; threadTs: string | null }
+
+/**
+ * The first Slack message link in some text, the inverse of permalink(): Slack's "Copy link" gives
+ * https://<workspace>.slack.com/archives/<channel>/p<ts without its dot>, with ?thread_ts=<root> when
+ * the message is a reply inside a thread.
+ */
+export function parsePermalink(text: string): SlackLink | null {
+  const m = /https:\/\/[a-z0-9-]+(?:\.enterprise)?\.slack\.com\/archives\/([CDG][A-Z0-9]+)\/p(\d{10})(\d{6})(\?[^\s<>|)]*)?/.exec(text);
+  if (!m) return null;
+  const ts = `${m[2]}.${m[3]}`;
+  const thread = /[?&]thread_ts=(\d{10}\.\d{6})/.exec(m[4] ?? "")?.[1] ?? null;
+  return { url: m[0], channel: m[1], ts, threadTs: thread && thread !== ts ? thread : null };
+}
+
 const CHANNEL_CACHE = "slack.channel_cache";
 const CHANNEL_NAME_TTL = 7 * 24 * 3600_000;
 
@@ -245,6 +260,12 @@ const DRAFT_LIST_LIMIT = 500;
  * Ids of my drafts Slack still holds unsent (list-drafts leaves out sent and deleted ones). Null when
  * the list may be cut off, since then a missing draft could just be unlisted.
  */
+/** Member ids of a Slack user group (S…), for profile.yaml autoReply rules (mcp.ts). */
+export async function usergroupMembers(id: string): Promise<string[]> {
+  const g = await slackJson<{ member_ids?: string[] }>(["usergroups", "read", id, "--json", "--fields", "member_ids"]);
+  return Array.isArray(g?.member_ids) ? g.member_ids : [];
+}
+
 export async function liveDraftIds(): Promise<Set<string> | null> {
   const r = await slackJson<{ drafts?: Array<{ draft_id: string }> }>(["messages", "list-drafts", "--limit", String(DRAFT_LIST_LIMIT)]);
   const drafts = r.drafts ?? [];

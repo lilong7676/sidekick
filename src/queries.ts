@@ -10,9 +10,23 @@ import { t } from "./i18n.ts";
 import { CLAUDE, clip, log, newId, runProcess } from "./util.ts";
 import { shellQuote, takeoverArgs, writeMcpConfig } from "./runner.ts";
 import { effectiveMode, loadSettings, runSettings } from "./settings.ts";
-import { cachedMe, deleteDraft, permalink } from "./slack.ts";
+import { cachedMe, deleteDraft, parsePermalink, permalink } from "./slack.ts";
+import { DELETED_IN_SLACK } from "./approvals.ts";
 
 export type TaskFilter = "attention" | "active" | "closed" | "all";
+
+export interface DeletedDraft { approvalId: string; taskId: string; title: string }
+
+/**
+ * Reply drafts I deleted in Slack in the last 15 minutes. Deleting the draft is how I say the reply was
+ * not good enough, so the menu bar app offers once to carry on in Claude with the task's session
+ * (Notifier.swift), instead of my pasting the Slack link into Claude and starting over.
+ */
+export function recentlyDeletedDrafts(db: Database, now = Date.now()): DeletedDraft[] {
+  return db.prepare(`SELECT a.id AS approvalId, a.task_id AS taskId, t.title AS title FROM approvals a JOIN tasks t ON t.id = a.task_id
+                     WHERE a.result = ? AND a.decided_at > ? AND t.session_id IS NOT NULL ORDER BY a.decided_at`)
+    .all(DELETED_IN_SLACK, now - 15 * 60_000) as DeletedDraft[];
+}
 
 const FILTERS: Record<TaskFilter, string[] | null> = {
   attention: ["needs_approval", "needs_me", "failed"],
@@ -132,11 +146,25 @@ export function readRunLog(path: string | null): LogItem[] {
 
 // ---- actions the CLI and the UI share ----------------------------------------------------------------
 
+/**
+ * A task I give by hand. With a Slack message link in it, the task is tied to that conversation as if
+ * it had come from Slack: the agent can propose a reply there (mcp.ts replyTarget: that thread, or the
+ * DM), and later messages in the conversation join this task (intake.ts findJoinableTask). Without
+ * one there is nowhere to reply to, and a proposal is refused.
+ */
 export function addManualTask(db: Database, text: string): string {
   const id = newId("t");
   const now = Date.now();
-  db.prepare("INSERT INTO tasks (id, source, kind, title, status, next_prompt, created_at, updated_at) VALUES (?, 'manual', 'manual', ?, 'queued', ?, ?, ?)")
-    .run(id, clip(text, 80).replace(/\s+/g, " "), text, now, now);
+  const link = parsePermalink(text);
+  db.transaction(() => {
+    db.prepare("INSERT INTO tasks (id, source, kind, title, status, next_prompt, created_at, updated_at) VALUES (?, 'manual', 'manual', ?, 'queued', ?, ?, ?)")
+      .run(id, clip(text, 80).replace(/\s+/g, " "), text, now, now);
+    if (!link) return;
+    const eventId = Number(db.prepare(`INSERT INTO events (source, kind, dedupe_key, channel, ts, thread_ts, text, received_at, task_id)
+      VALUES ('slack', ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(link.channel.startsWith("D") ? "dm" : "mention", `manual:${id}`, link.channel, link.ts, link.threadTs, link.url, now, id).lastInsertRowid);
+    db.prepare("UPDATE tasks SET event_id = ? WHERE id = ?").run(eventId, id);
+  })();
   return id;
 }
 
@@ -252,7 +280,7 @@ export function processNow(db: Database, id: string): void {
   }
 }
 
-/** What 「在 Claude Code 里继续」 opened, or the command to run by hand where it cannot open anything. */
+/** What 「在 Claude 里继续」 opened, or the command to run by hand where it cannot open anything. */
 export interface Continued { where: "terminal" | "desktop"; cwd: string; session: string; name: string; command: string }
 
 /** `claude --desktop` needs a terminal to talk to; script(1) lends it one. Its output keeps the colours. */

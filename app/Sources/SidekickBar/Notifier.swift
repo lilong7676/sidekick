@@ -1,11 +1,12 @@
 import Foundation
 import UserNotifications
 
-/// Native notifications with buttons: approve or deny (with an optional note) without opening
-/// the panel. Each approval and each needs-me / failed task is announced once.
+/// Native notifications with buttons: approve or deny (with an optional note), or carry on in Claude,
+/// without opening the panel. Each approval, needs-me / failed task and deleted draft is announced once.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let approve = "SK_APPROVE"
     static let deny = "SK_DENY"
+    static let continueInClaude = "SK_CONTINUE"
     private let client: DaemonClient
     private let onOpenTask: (String) -> Void
     private let seenKey = "sidekick.notified"
@@ -32,9 +33,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             identifier: Self.deny, title: L("拒绝…", "Deny…"), options: [],
             textInputButtonTitle: L("拒绝", "Deny"),
             textInputPlaceholder: L("意见（可选，填了会让它重做）", "Feedback (optional; it will redo the work with it)"))
+        // Same as the panel's button: the task's session, in Terminal or the Claude desktop app per 设置.
+        let carryOn = UNNotificationAction(identifier: Self.continueInClaude, title: L("在 Claude 里继续", "Continue in Claude"), options: [])
         UNUserNotificationCenter.current().setNotificationCategories([
-            UNNotificationCategory(identifier: "SK_APPROVAL", actions: [approve, deny], intentIdentifiers: []),
-            UNNotificationCategory(identifier: "SK_TASK", actions: [], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "SK_APPROVAL", actions: [approve, deny, carryOn], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "SK_TASK", actions: [carryOn], intentIdentifiers: []),
+            UNNotificationCategory(identifier: "SK_DRAFT_DELETED", actions: [carryOn], intentIdentifiers: []),
         ])
     }
 
@@ -83,6 +87,34 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         done([.banner, .sound])
     }
 
+    /// A reply draft I deleted in Slack: the reply was not good enough, so offer once to carry on in
+    /// Claude with the task's session rather than start over from the Slack link.
+    func announceDeleted(_ drafts: [DeletedDraft], show: Bool) {
+        for d in drafts where !seen.contains("d:\(d.approvalId)") {
+            markSeen("d:\(d.approvalId)")
+            let c = UNMutableNotificationContent()
+            c.title = L("你删掉了 sidekick 的草稿", "You deleted sidekick's draft")
+            c.subtitle = d.title
+            c.body = L("要自己接着处理，就在 Claude 里继续这个会话：查过的东西都在。", "To handle it yourself, continue this session in Claude: everything it looked up is there.")
+            c.categoryIdentifier = "SK_DRAFT_DELETED"
+            c.userInfo = ["taskId": d.taskId]
+            if show { post(c, id: "d-\(d.approvalId)") }
+        }
+    }
+
+    /// The panel's 「在 Claude 里继续」: the daemon opens the desktop app itself; a Terminal fork is opened here.
+    private func carryOn(_ taskId: String) async {
+        do {
+            let r = try await client.continueTask(taskId)
+            if r.where == "terminal" {
+                await MainActor.run { Terminal.continueSession(cwd: r.cwd, session: r.session, name: r.name) }
+            }
+        } catch {
+            NSLog("sidekick: continue in Claude failed: \(error)")
+            await MainActor.run { self.onOpenTask(taskId) }
+        }
+    }
+
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         let approvalId = info["approvalId"] as? String
@@ -93,6 +125,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         case Self.deny:
             let note = (response as? UNTextInputNotificationResponse)?.userText
             if let approvalId { Task { try? await client.deny(approvalId, note: note) } }
+        case Self.continueInClaude:
+            if let taskId { Task { await self.carryOn(taskId) } }
         default:
             if let taskId { DispatchQueue.main.async { self.onOpenTask(taskId) } }
         }

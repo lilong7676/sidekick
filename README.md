@@ -33,7 +33,7 @@ an unread DM to you, or a message that @-mentions you
 - **Signed replies.** A grey line above each reply it sends says an assistant drafted it, and whether you had approved it.
 - **One conversation, one task.** Follow-ups in a thread or a DM join the same task and resume the same Claude session, with a single approval card per conversation.
 - **Rules before the agent runs, at no cost.** Skip certain people or channels; outside working hours, take messages in but work on them later.
-- **Hand over to yourself.** "Continue in Claude Code" opens the task's session in your own Claude Code, in Terminal or in the Claude desktop app.
+- **Hand over to yourself.** Not happy with a draft? "Continue in Claude" opens the task's session, with everything it looked up, in the Claude desktop app or Claude Code in Terminal. It is on the task, on its notifications, and offered when you delete a draft in Slack.
 - **Local.** The task ledger, your persona and your settings stay on your Mac.
 
 ## Install
@@ -79,7 +79,7 @@ In Settings you can:
 - set how long a conversation keeps its task (Follow-ups in a conversation): a thread with no time limit and a DM for 2 hours by default;
 - set which messages to skip and the working hours (Which messages);
 - set which notifications you get: macOS notifications, and a Slack DM to yourself that reaches your phone (Notifications);
-- choose where "Continue in Claude Code" opens: Terminal or the Claude desktop app (Continue in Claude Code).
+- choose where "Continue in Claude" opens: the Claude desktop app or Terminal (Continue in Claude).
 
 The panel also opens in a browser at `http://127.0.0.1:47321`. The first time, paste the `token` from `~/.config/sidekick/runtime.json`.
 

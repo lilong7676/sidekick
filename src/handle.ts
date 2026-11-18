@@ -73,13 +73,17 @@ export function slackTaskPrompt(profile: Profile, task: TaskRow, ev: EventRow, l
   ].join("\n");
 }
 
-export function manualTaskPrompt(profile: Profile, task: TaskRow, request: string): string {
+/** `linked`: the request carried a Slack message link, so the task belongs to that conversation (queries.ts addManualTask). */
+export function manualTaskPrompt(profile: Profile, task: TaskRow, request: string, linked = false): string {
   return [
     `任务 ${task.id}：使用者手动派给你的事。`,
     "",
     request,
     "",
     ...(profile.manual.skill ? [`先完整读 ${profile.manual.skill}。`] : []),
+    ...(linked
+      ? ["这个任务挂在上面那条 Slack 链接所在的对话上。要回复对方，用 mcp__sidekick__propose 提交 slack.reply：回复会进那个对话（链接在 thread 里就进那个 thread），使用者审批后发出。"]
+      : []),
     "做完调用 mcp__sidekick__report。需要对外发出的东西，用 mcp__sidekick__propose 提交审批。",
   ].join("\n");
 }
@@ -104,7 +108,7 @@ export function launchSpec(profile: Profile, task: TaskRow, runId: string, dbPat
     ask: profile.policy.ask,
     deny,
     guardPolicyPath: writeGuardPolicy(join(profile.stateDir, "runs"), runId, { ask: profile.policy.ask, deny }),
-    sidekickMcp: { dbPath, taskId: task.id, runId, waitMs: profile.approvals.waitMinutes * 60_000, profileRoot: profile.root, mode: settings.mode },
+    sidekickMcp: { dbPath, taskId: task.id, runId, waitMs: profile.approvals.waitMinutes * 60_000, profileRoot: profile.root, mode: settings.mode, autoReply: profile.autoReply },
     appendSystemPrompt: systemPrompt(profile, settings.mode),
     timeoutMs: profile.agent.timeoutMinutes * 60_000,
   };
@@ -144,7 +148,7 @@ export async function startTaskRun(profile: Profile, db: Database, task: TaskRow
     prompt = slackTaskPrompt(profile, task, ev, permalink(me, ev.channel!, ev.ts!, ev.thread_ts), context);
     if (task.next_prompt) prompt += `\n\n${task.next_prompt}`;
   } else {
-    prompt = manualTaskPrompt(profile, task, task.next_prompt ?? task.title);
+    prompt = manualTaskPrompt(profile, task, task.next_prompt ?? task.title, task.event_id !== null);
   }
 
   const spec = launchSpec(profile, task, runId, dbPath, runSettings()); // the mode in force now holds for the whole run
@@ -158,20 +162,27 @@ export async function startTaskRun(profile: Profile, db: Database, task: TaskRow
   handle.done.then(async (r) => {
     // COALESCE keeps a "cancelled" mark written by cancel() before the kill landed.
     db.prepare("UPDATE runs SET ended_at = ?, exit_code = ?, cost_usd = ?, turns = ?, error = COALESCE(error, ?), session_id = COALESCE(?, session_id) WHERE id = ?")
-      .run(Date.now(), r.exitCode, r.costUsd, r.turns, r.timedOut ? "timeout" : r.isError ? clip(r.text, 300) || "no result" : null, r.sessionId, runId);
-    settle(db, task.id, r.isError || r.timedOut);
+      .run(Date.now(), r.exitCode, r.costUsd, r.turns, r.apiStalled ? "api unavailable" : r.timedOut ? "timeout" : r.isError ? clip(r.text, 300) || "no result" : null, r.sessionId, runId);
+    settle(db, task.id, r.isError || r.timedOut, r.apiStalled ? Date.now() + RETRY_LATER_MS : undefined);
     log(`agent: ${task.id} run ${runId} ended exit=${r.exitCode} $${r.costUsd?.toFixed(3) ?? "?"} turns=${r.turns ?? "?"}${r.timedOut ? " TIMEOUT" : ""}`);
     onDone(task.id);
   });
   return handle;
 }
 
-/** After a run: decide what the task is waiting for now. */
-export function settle(db: Database, taskId: string, failed: boolean): void {
+/** After a run that could not reach the API (runner.ts apiStall): when to try again. */
+export const RETRY_LATER_MS = 10 * 60_000;
+
+/**
+ * After a run: decide what the task is waiting for now. `retryAt`: the run could not reach the API,
+ * so the task waits until then and the attempt does not count against it.
+ */
+export function settle(db: Database, taskId: string, failed: boolean, retryAt?: number): void {
   const task = getTask(db, taskId);
   if (!task || task.status !== "running") return; // cancelled or paused meanwhile
   const pending = db.prepare("SELECT kind FROM approvals WHERE task_id = ? AND status = 'pending'").all(taskId) as Pick<ApprovalRow, "kind">[];
   if (pending.length > 0) return setTaskStatus(db, taskId, "needs_approval");
+  if (retryAt !== undefined) return setTaskStatus(db, taskId, "queued", { not_before: retryAt });
   if (failed) {
     const attempts = task.attempts + 1;
     db.prepare("UPDATE tasks SET attempts = ? WHERE id = ?").run(attempts, taskId);

@@ -14,8 +14,9 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { ApprovalRow, EventRow, TaskRow } from "./db.ts";
-import { AUTO_NOTE } from "./approvals.ts";
-import { createDraft, deleteDraft } from "./slack.ts";
+import { AUTO_NOTE, RULE_NOTE } from "./approvals.ts";
+import type { Profile } from "./config.ts";
+import { createDraft, deleteDraft, usergroupMembers } from "./slack.ts";
 import { hash, log, newId, sleep, VERSION } from "./util.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
@@ -58,8 +59,41 @@ export function replyTarget(ev: EventRow): { channel: string; threadTs: string |
 }
 
 /**
- * A reply proposal becomes an approval card. In full mode it is approved on the spot, so it goes out
- * when the run ends without ever showing up as pending; cards already waiting keep waiting for me.
+ * Whether a profile.yaml autoReply rule lets this reply go out without me: the task's message came
+ * from someone the rule names (directly, or through a Slack user group), and the reply is exactly one
+ * of the rule's texts. Decided here in code; the agent only proposes.
+ */
+export async function autoReplyAllowed(
+  db: Database,
+  taskId: string,
+  text: string,
+  rules: Profile["autoReply"],
+  members: (group: string) => Promise<string[]> = usergroupMembers,
+): Promise<boolean> {
+  const body = text.trim();
+  const usable = rules.filter((r) => r.texts.some((x) => x.trim() === body));
+  if (!usable.length) return false;
+  const task = db.prepare("SELECT event_id FROM tasks WHERE id = ?").get(taskId) as Pick<TaskRow, "event_id"> | null;
+  const ev = task?.event_id ? (db.prepare("SELECT source, user_id FROM events WHERE id = ?").get(task.event_id) as Pick<EventRow, "source" | "user_id"> | null) : null;
+  const who = ev?.source === "slack" ? ev.user_id : null;
+  if (!who) return false;
+  for (const r of usable) {
+    if (r.from.includes(who)) return true;
+    for (const group of r.from.filter((f) => f.startsWith("S"))) {
+      try {
+        if ((await members(group)).includes(who)) return true;
+      } catch (e) {
+        log(`propose: reading user group ${group} failed: ${String(e).slice(0, 200)}`);
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * A reply proposal becomes an approval card. Approved on the spot in full mode, or when an autoReply
+ * rule allows it (`note` says which), so it goes out when the run ends without ever showing up as
+ * pending; cards already waiting keep waiting for me.
  */
 export async function proposeSlackReply(
   db: Database,
@@ -70,10 +104,13 @@ export async function proposeSlackReply(
   draft: (channel: string, threadTs: string | null, text: string) => string | Promise<string> = createDraft,
   auto = false,
   discardDraft: (draftId: string) => void | Promise<void> = deleteDraft,
+  note: string = AUTO_NOTE,
 ): Promise<string> {
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as TaskRow | null;
   const ev = task?.event_id ? (db.prepare("SELECT * FROM events WHERE id = ?").get(task.event_id) as EventRow | null) : null;
-  if (!ev || ev.source !== "slack") return "这个任务不是从 Slack 来的，不能提议 Slack 回复。";
+  if (!ev || ev.source !== "slack") {
+    return "这个任务没有关联的 Slack 对话，不能提议 Slack 回复。把草稿写进 report，并告诉使用者：派活时带上那条 Slack 消息的链接，就能在面板里直接审批发送。";
+  }
   const pending = db.prepare("SELECT id, run_id, payload FROM approvals WHERE task_id = ? AND kind = 'outbound' AND status = 'pending'").get(taskId) as
     Pick<ApprovalRow, "id" | "run_id" | "payload"> | null;
   if (pending && pending.run_id === runId) return "这个任务已经有一条待审批的回复了，不要再提。等使用者审批。";
@@ -104,7 +141,8 @@ export async function proposeSlackReply(
   db.prepare(`INSERT INTO approvals (id, task_id, run_id, kind, key, payload, created_at, status, decision_note, decided_at)
               VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?)`)
     .run(id, taskId, runId, hash({ kind: "slack.reply", body }), JSON.stringify({ kind: "slack.reply", ...target, text: body, reason, draftId, draftError }), now,
-      auto ? "approved" : "pending", auto ? AUTO_NOTE : null, auto ? now : null);
+      auto ? "approved" : "pending", auto ? note : null, auto ? now : null);
+  if (auto && note === RULE_NOTE) return "按 profile 的 autoReply 规则，这条回复不用审批，会在本轮结束后直接发出。本轮可以结束了。";
   if (auto) return "全托管模式：这条回复会在本轮结束后直接发出。本轮可以结束了。";
   return draftId
     ? "已在 Slack 输入框里建好草稿，并提交给使用者审批。本轮可以结束了。"
@@ -115,6 +153,18 @@ export function report(db: Database, taskId: string, outcome: string, summary: s
   db.prepare("UPDATE tasks SET outcome = ?, summary = ?, updated_at = ? WHERE id = ?")
     .run(outcome, evidence ? `${summary}\n\n证据：${evidence}` : summary, Date.now(), taskId);
   return "已记录。";
+}
+
+/** profile.yaml autoReply, handed over by runner.ts. Anything unreadable means no rules: nothing goes out unseen by mistake. */
+export function autoReplyRules(raw = process.env.SIDEKICK_AUTO_REPLY): Profile["autoReply"] {
+  try {
+    const rules = JSON.parse(raw ?? "[]");
+    if (!Array.isArray(rules)) return [];
+    return rules.filter((r) => Array.isArray(r?.from) && Array.isArray(r?.texts)
+      && r.from.every((f: unknown) => typeof f === "string") && r.texts.every((x: unknown) => typeof x === "string"));
+  } catch {
+    return [];
+  }
 }
 
 export async function serveMcp(): Promise<void> {
@@ -172,7 +222,11 @@ export async function serveMcp(): Promise<void> {
         if (a.kind !== "slack.reply" || typeof a.text !== "string" || !a.text.trim()) return text("参数不对：kind 必须是 slack.reply，text 不能为空。");
         // The run's own mode, not the one in force now: a reply drafted under semi-mode rules never goes out
         // unseen because full mode began (by hand or on a timetable) while it was being written.
-        return text(await proposeSlackReply(db, taskId, runId, a.text, String(a.reason ?? ""), createDraft, process.env.SIDEKICK_MODE === "full"));
+        {
+          const full = process.env.SIDEKICK_MODE === "full";
+          const byRule = !full && await autoReplyAllowed(db, taskId, a.text, autoReplyRules());
+          return text(await proposeSlackReply(db, taskId, runId, a.text, String(a.reason ?? ""), createDraft, full || byRule, deleteDraft, byRule ? RULE_NOTE : AUTO_NOTE));
+        }
       case "report":
         return text(report(db, taskId, String(a.outcome), String(a.summary ?? ""), a.evidence ? String(a.evidence) : undefined));
       default:

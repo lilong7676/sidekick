@@ -2,17 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AUTO_NOTE, DELETED_IN_SLACK, processDecisions, decide, reconcileDrafts, replyBlocks, SENT_IN_SLACK, SIGN_APPROVED, SIGN_AUTO } from "../src/approvals.ts";
+import { AUTO_NOTE, DELETED_IN_SLACK, processDecisions, decide, reconcileDrafts, replyBlocks, RULE_NOTE, SENT_IN_SLACK, SIGN_APPROVED, SIGN_AUTO } from "../src/approvals.ts";
 import { getTask, openDb, type EventRow } from "../src/db.ts";
-import { decidePermission, PENDING_MESSAGE, proposeSlackReply, replyTarget } from "../src/mcp.ts";
-import { claudeArgs, takeoverArgs, type LaunchSpec } from "../src/runner.ts";
-import { pickSlackMessages, type UnreadRich } from "../src/slack.ts";
-import { ENGINE_DENY, sessionFor, settle } from "../src/handle.ts";
-import { continueInClaude, processNow, slackPeople } from "../src/queries.ts";
+import { autoReplyAllowed, autoReplyRules, decidePermission, PENDING_MESSAGE, proposeSlackReply, replyTarget } from "../src/mcp.ts";
+import { API_STALL_MS, apiStall, claudeArgs, takeoverArgs, type LaunchSpec } from "../src/runner.ts";
+import { parsePermalink, pickSlackMessages, type UnreadRich } from "../src/slack.ts";
+import { ENGINE_DENY, manualTaskPrompt, RETRY_LATER_MS, sessionFor, settle } from "../src/handle.ts";
+import { addManualTask, continueInClaude, processNow, recentlyDeletedDrafts, slackPeople } from "../src/queries.ts";
 import { approvalLine } from "../src/notify.ts";
 import { setLang } from "../src/i18n.ts";
 import { Database } from "bun:sqlite";
-import { intakeSlack } from "../src/intake.ts";
+import { intakeSlack, isClosing, QUIET_MS } from "../src/intake.ts";
 import type { Profile } from "../src/config.ts";
 
 const freshDb = () => openDb(mkdtempSync(join(tmpdir(), "sidekick-test-")));
@@ -504,7 +504,7 @@ describe("intake: Slack events become tasks", () => {
     addEvent(db, { ts: at(0), text: "问题都改完了不" });
     intakeSlack(db, DEFAULTS);
     settle(db, "done");
-    addEvent(db, { ts: at(1.5), text: "欧克" });
+    addEvent(db, { ts: at(1.5), text: "那你发吧" });
     expect(intakeSlack(db, DEFAULTS)).toBe(0);
     expect(tasks(db)[0]).toMatchObject({ status: "queued" });
     expect(tasks(db)[0].next_prompt).toContain("上一轮已经处理完了");
@@ -559,6 +559,66 @@ describe("intake: Slack events become tasks", () => {
     addEvent(db, { kind: "mention", channel: "C1", ts: at(0) });
     addEvent(db, { kind: "mention", channel: "C2", ts: at(0.01) });
     expect(intakeSlack(db, DEFAULTS)).toBe(2);
+  });
+});
+
+// Each message used to start a run of its own, and each resumed run re-read the whole conversation:
+// "好了", "欧克", "那你发吧", "hao wo kankan" cost $0.43, $0.64, $0.87, $1.89 (2026-11-18).
+describe("follow-ups: a burst is one run, and a closing word is not worked on", () => {
+  const addEvent = (db: ReturnType<typeof openDb>, ts: string, text: string) =>
+    db.prepare(`INSERT INTO events (source, kind, dedupe_key, channel, ts, user_id, user_name, text, received_at)
+      VALUES ('slack', 'dm', ?, 'D1', ?, 'U1', 'Bin', ?, 0)`).run(`k${Math.random()}`, ts, text);
+  const task = (db: ReturnType<typeof openDb>) => db.prepare("SELECT id, status, not_before, next_prompt FROM tasks").get() as { id: string; status: string; not_before: number | null; next_prompt: string | null };
+  const RULES = { thread: null, dm: 2, skipUsers: [], skipChannels: [], workHours: null };
+  const sec = (s: number) => (Date.now() / 1000 + s).toFixed(6);
+
+  test("a new conversation waits a minute after its latest message; a message meanwhile pushes it back", () => {
+    const db = freshDb();
+    addEvent(db, sec(0), "上 staging 了吧？");
+    intakeSlack(db, RULES);
+    const first = task(db).not_before!;
+    expect(first).toBeGreaterThan(Date.now() + QUIET_MS - 5_000);
+    addEvent(db, sec(30), "怎么回事~");
+    intakeSlack(db, RULES);
+    expect(task(db).not_before!).toBeGreaterThanOrEqual(first + 29_000);
+    expect(task(db).next_prompt).toContain("怎么回事~");
+  });
+
+  test("a message collected late does not wait: its quiet minute is already over", () => {
+    const db = freshDb();
+    addEvent(db, sec(-600), "上 staging 了吧？");
+    intakeSlack(db, RULES);
+    expect(task(db).not_before).toBeNull();
+  });
+
+  test("after hours the morning start wins over the quiet minute", () => {
+    const db = freshDb();
+    addEvent(db, sec(0), "在吗");
+    const night = new Date(); night.setHours(23, 0, 0, 0);
+    intakeSlack(db, { ...RULES, workHours: { start: 9, end: 20, weekends: true } }, night);
+    expect(task(db).not_before!).toBeGreaterThan(Date.now() + 60 * 60_000);
+  });
+
+  test("a closing word in a handled conversation is kept with the task but does not reopen it", () => {
+    const db = freshDb();
+    addEvent(db, sec(-600), "上 staging 了吧？");
+    intakeSlack(db, RULES);
+    db.prepare("UPDATE tasks SET status = 'done', updated_at = ?").run(Date.now());
+    for (const text of ["好了", "欧克", "哈哈", ":+1:", "👍"]) addEvent(db, sec(0), text);
+    intakeSlack(db, RULES);
+    expect(task(db)).toMatchObject({ status: "done", next_prompt: null });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = ?").get(task(db).id) as { n: number }).n).toBe(6);
+    addEvent(db, sec(0), "那你发吧");
+    intakeSlack(db, RULES);
+    expect(task(db).status).toBe("queued");
+  });
+
+  test("what counts as a closing word", () => {
+    for (const s of ["好了", "好的！", "欧克", "ok", "OK~", "收到", "谢谢", "哈哈哈", "嗯嗯", ":+1:", "👍👍", "<@U0733BA64AE> :pray:", "thanks!"]) expect(isClosing(s)).toBe(true);
+    for (const s of ["那你发吧", "hao wo kankan", "你慢慢搞", "好了吗？上了没", "ok 那我先合了", "可以按照这个改", ""]) {
+      if (s === "") expect(isClosing(s)).toBe(true);
+      else expect(isClosing(s)).toBe(false);
+    }
   });
 });
 
@@ -670,5 +730,172 @@ describe("slackcli calls do not block the daemon", () => {
       if (prev === undefined) delete process.env.SIDEKICK_SLACKCLI;
       else process.env.SIDEKICK_SLACKCLI = prev;
     }
+  });
+});
+
+// A task given by hand used to have nowhere to reply: an agent asked to answer a Slack thread it had
+// been linked to drafted the answer, had its proposal refused, and told me to paste it myself.
+describe("a task given by hand with a Slack link", () => {
+  const ROOT = "https://acme.slack.com/archives/C0B39GJKUBV/p1794909984018279";
+  const REPLY = "https://acme.slack.com/archives/C0B39GJKUBV/p1794910000000100?thread_ts=1794909984.018279&cid=C0B39GJKUBV";
+  const DM = "https://acme.slack.com/archives/D0123ABC/p1794909000123456";
+  const drafted = () => {
+    const calls: Array<[string, string | null]> = [];
+    return { calls, draft: (c: string, t: string | null) => { calls.push([c, t]); return "Dr1"; } };
+  };
+
+  test("reads Slack's copied links: a message, a reply in a thread, a DM, and text with none", () => {
+    expect(parsePermalink(`${ROOT} review this`)).toEqual({ url: ROOT, channel: "C0B39GJKUBV", ts: "1794909984.018279", threadTs: null });
+    expect(parsePermalink(`看下 <${REPLY}|这条>`)).toMatchObject({ channel: "C0B39GJKUBV", ts: "1794910000.000100", threadTs: "1794909984.018279" });
+    expect(parsePermalink(DM)).toMatchObject({ channel: "D0123ABC", ts: "1794909000.123456", threadTs: null });
+    expect(parsePermalink("https://acme.enterprise.slack.com/archives/G1A2B3/p1794909000123456")).toMatchObject({ channel: "G1A2B3" });
+    expect(parsePermalink("review https://github.com/acme/web/pull/241")).toBeNull();
+    expect(parsePermalink("https://acme.slack.com/archives/C0B39GJKUBV")).toBeNull();
+  });
+
+  test("a link to a message: the reply goes in that message's thread, through an approval card", async () => {
+    const db = freshDb();
+    const id = addManualTask(db, `${ROOT} review this`);
+    expect(getTask(db, id)?.event_id).not.toBeNull();
+    const d = drafted();
+    expect(await proposeSlackReply(db, id, "r1", "看了，整体没问题", "", d.draft)).toContain("草稿");
+    expect(d.calls).toEqual([["C0B39GJKUBV", "1794909984.018279"]]);
+    expect((db.prepare("SELECT status FROM approvals WHERE task_id = ?").get(id) as { status: string }).status).toBe("pending");
+  });
+
+  test("a link to a reply goes in its thread; a DM link goes in the DM", async () => {
+    const db = freshDb();
+    const d = drafted();
+    await proposeSlackReply(db, addManualTask(db, `帮我回一下 ${REPLY}`), "r1", "好", "", d.draft);
+    await proposeSlackReply(db, addManualTask(db, `回他 ${DM}`), "r2", "好", "", d.draft);
+    expect(d.calls).toEqual([["C0B39GJKUBV", "1794909984.018279"], ["D0123ABC", null]]);
+  });
+
+  test("without a link it says how to get one sent next time", async () => {
+    const db = freshDb();
+    const id = addManualTask(db, "review https://github.com/acme/web/pull/241");
+    expect(getTask(db, id)?.event_id).toBeNull();
+    expect(await proposeSlackReply(db, id, "r1", "好", "", drafted().draft)).toContain("派活时带上那条 Slack 消息的链接");
+  });
+
+  test("later messages in that thread join the task, and the agent is told where its reply goes", () => {
+    const db = freshDb();
+    const id = addManualTask(db, `${ROOT} review this`);
+    db.prepare(`INSERT INTO events (source, kind, dedupe_key, channel, ts, thread_ts, user_id, user_name, text, received_at)
+      VALUES ('slack', 'mention', 'k-later', 'C0B39GJKUBV', ?, '1794909984.018279', 'U2', 'Leo', '<@ME> 看完了吗', 0)`).run((Date.now() / 1000).toFixed(6));
+    expect(intakeSlack(db, { thread: null, dm: 2, skipUsers: [], skipChannels: [], workHours: null })).toBe(0);
+    expect((db.prepare("SELECT task_id FROM events WHERE dedupe_key = 'k-later'").get() as { task_id: string }).task_id).toBe(id);
+    const profile = { manual: {} } as unknown as Profile;
+    expect(manualTaskPrompt(profile, getTask(db, id)!, `${ROOT} review this`, true)).toContain("mcp__sidekick__propose 提交 slack.reply");
+    expect(manualTaskPrompt(profile, getTask(db, id)!, "review", false)).not.toContain("slack.reply");
+  });
+});
+
+// Routine replies I said need no review go out on their own, e.g. 「已 approve ✅」 after approving a
+// teammate's PR (2026-11-18). The rule is checked in code: sender and exact text, nothing the agent decides.
+describe("replies an autoReply rule lets out without me", () => {
+  const RULES = [{ from: ["S04GBA1855G", "U0DAVE"], texts: ["已 approve ✅"] }];
+  const members = async (g: string) => (g === "S04GBA1855G" ? ["U0CHICO", "U0DAMIAN"] : []);
+  const seed = (db: ReturnType<typeof openDb>, userId: string | null) => {
+    const ev = Number(db.prepare(`INSERT INTO events (source, kind, dedupe_key, channel, ts, user_id, text, received_at)
+      VALUES ('slack', 'dm', ?, 'D1', '1.0', ?, 'https://github.com/AfterShip/x/pull/1 dd', 0)`).run(`k${Math.random()}`, userId).lastInsertRowid);
+    db.prepare("INSERT INTO tasks (id, source, kind, title, status, event_id, created_at, updated_at) VALUES ('t1', 'slack', 'dm', 'x', 'running', ?, 0, 0)").run(ev);
+  };
+
+  test("someone in a named user group, or named directly, with exactly the rule's text", async () => {
+    for (const who of ["U0CHICO", "U0DAVE"]) {
+      const db = freshDb();
+      seed(db, who);
+      expect(await autoReplyAllowed(db, "t1", " 已 approve ✅ ", RULES, members)).toBe(true);
+    }
+  });
+
+  test("anyone else, any other text, a task given by hand, or no rules: it waits for me", async () => {
+    const db = freshDb();
+    seed(db, "U0STRANGER");
+    expect(await autoReplyAllowed(db, "t1", "已 approve ✅", RULES, members)).toBe(false);
+    const db2 = freshDb();
+    seed(db2, "U0CHICO");
+    expect(await autoReplyAllowed(db2, "t1", "已 approve ✅，顺便说一下……", RULES, members)).toBe(false);
+    expect(await autoReplyAllowed(db2, "t1", "已 approve ✅", [], members)).toBe(false);
+    const db3 = freshDb();
+    seed(db3, null);
+    expect(await autoReplyAllowed(db3, "t1", "已 approve ✅", RULES, members)).toBe(false);
+  });
+
+  test("a group that cannot be read lets nothing through", async () => {
+    const db = freshDb();
+    seed(db, "U0CHICO");
+    expect(await autoReplyAllowed(db, "t1", "已 approve ✅", RULES, async () => { throw new Error("offline"); })).toBe(false);
+  });
+
+  test("allowed: approved on the spot with the rule's note, and sent signed as unreviewed", async () => {
+    const db = freshDb();
+    seed(db, "U0CHICO");
+    expect(await proposeSlackReply(db, "t1", "r1", "已 approve ✅", "", () => "Dr1", true, () => {}, RULE_NOTE)).toContain("autoReply");
+    expect(db.prepare("SELECT status, decision_note FROM approvals").get()).toEqual({ status: "approved", decision_note: RULE_NOTE });
+    const sent: string[] = [];
+    const sender = {
+      liveDrafts: async () => new Set<string>(), mineSince: async () => null, sendDraft: async () => {}, deleteDraft: async () => {},
+      sendMessage: async (_c: string, _t: string | null, _b: string, blocks?: unknown[]) => void sent.push(JSON.stringify(blocks)),
+    };
+    await processDecisions(db, () => false, sender as never, undefined, { sign: true });
+    expect(sent[0]).toContain(SIGN_AUTO);
+  });
+
+  test("the rules handed to the MCP server: unreadable means none", () => {
+    expect(autoReplyRules(JSON.stringify(RULES))).toEqual(RULES);
+    expect(autoReplyRules("not json")).toEqual([]);
+    expect(autoReplyRules(JSON.stringify([{ from: "S1", texts: ["x"] }]))).toEqual([]);
+    expect(autoReplyRules(undefined)).toEqual([]);
+  });
+});
+
+// Three overnight tasks each sat out the 40-minute timeout three times while Claude only retried the
+// API (offline or asleep), about two hours each (2026-11-18). Now such a run stops after five minutes
+// and the task waits ten, without the attempt counting against it.
+describe("a run that cannot reach the API", () => {
+  test("only api_retry for a while is a stall; anything else resets it", () => {
+    let now = 0;
+    const s = apiStall(() => now);
+    s.see({ type: "system", subtype: "init" });
+    expect(s.stalledFor()).toBe(0);
+    s.see({ type: "system", subtype: "api_retry" });
+    now = 4 * 60_000;
+    s.see({ type: "system", subtype: "api_retry" });
+    expect(s.stalledFor()).toBe(4 * 60_000);
+    s.see({ type: "assistant" });
+    expect(s.stalledFor()).toBe(0);
+    s.see({ type: "system", subtype: "api_retry" });
+    now = 4 * 60_000 + API_STALL_MS + 1;
+    expect(s.stalledFor()).toBeGreaterThan(API_STALL_MS);
+  });
+
+  test("the task waits to try again, and the attempt does not count", () => {
+    const db = freshDb();
+    seedTask(db, "running");
+    const later = Date.now() + RETRY_LATER_MS;
+    settle(db, "t1", true, later);
+    expect(getTask(db, "t1")).toMatchObject({ status: "queued", attempts: 0, not_before: later });
+    db.prepare("UPDATE tasks SET status = 'running'").run();
+    settle(db, "t1", true);
+    expect(getTask(db, "t1")).toMatchObject({ status: "queued", attempts: 1 });
+  });
+});
+
+describe("a draft I deleted in Slack offers to carry on in Claude", () => {
+  test("deleted in the last 15 minutes, on a task with a session; older ones and others are not offered", () => {
+    const db = freshDb();
+    const now = Date.now();
+    for (const [task, session] of [["t1", "s1"], ["t2", null]] as const) {
+      db.prepare("INSERT INTO tasks (id, source, kind, title, status, session_id, created_at, updated_at) VALUES (?, 'slack', 'dm', ?, 'done', ?, 0, 0)").run(task, `task ${task}`, session);
+    }
+    const add = (id: string, task: string, result: string, at: number) =>
+      db.prepare("INSERT INTO approvals (id, task_id, run_id, kind, key, payload, status, created_at, result, decided_at) VALUES (?, ?, 'r', 'outbound', ?, '{}', 'denied', 0, ?, ?)").run(id, task, id, result, at);
+    add("a1", "t1", DELETED_IN_SLACK, now - 60_000);
+    add("a2", "t1", DELETED_IN_SLACK, now - 20 * 60_000);
+    add("a3", "t1", SENT_IN_SLACK, now - 60_000);
+    add("a4", "t2", DELETED_IN_SLACK, now - 60_000);
+    expect(recentlyDeletedDrafts(db, now)).toEqual([{ approvalId: "a1", taskId: "t1", title: "task t1" }]);
   });
 });
