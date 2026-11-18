@@ -61,7 +61,10 @@ export function approvalLine(a: Pick<ApprovalRow, "kind" | "payload">, title: st
         "The draft is already in this conversation's message box: follow the link, edit it and send it. Not replying? Delete the draft.",
       )
     : t("草稿没建成，到菜单栏的 sidekick 里批准后发出。", "The draft could not be created; approve it in sidekick in the menu bar to send it.");
-  return `${t(`待你回复 · ${title}`, `Reply to approve · ${title}`)}\n> ${clip(p.text, 120).replace(/\n/g, "\n> ")}\n${how}${link ? `\n${link}` : ""}`;
+  const more = Array.isArray(p.choices) && p.choices.length > 1
+    ? `\n${t(`另有 ${p.choices.length - 1} 条候选，在菜单栏的 sidekick 里挑一条发。`, `${p.choices.length - 1} more to choose from in sidekick in the menu bar.`)}`
+    : "";
+  return `${t(`待你回复 · ${title}`, `Reply to approve · ${title}`)}\n> ${clip(p.text, 120).replace(/\n/g, "\n> ")}${more}\n${how}${link ? `\n${link}` : ""}`;
 }
 
 export async function notifyPending(db: Database, channels: { macos: boolean; slack: boolean }): Promise<void> {

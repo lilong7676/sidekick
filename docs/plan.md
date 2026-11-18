@@ -394,6 +394,14 @@ claude -p "<prompt>"
   - README 截图：`docs/images/`，用假数据和临时 HOME 拍，不含公司信息。
 - 终端桥接不再收命令字符串（2026-11-17，会话 299d615c）：「接管」原来把拼好的命令交给菜单栏 app，app 只检查开头是不是 `claude --resume`，面板页面被攻破时可以在后面接 `; 其他命令`。现在 daemon 给参数列表，`WebPanel.swift` 检查头两个是 `--resume <会话 ID>`，再逐个加引号拼命令；「在 Claude Code 里继续」和「升级」本来就是这样。页面再也传不进可执行的字符串。
 - 公司包（2026-11-17 定方向）：公司已有内部的 Claude Code 插件市场（每个 skill 一个插件）。sidekick 跑任务时只读工作区设置（`--setting-sources project,local`），同事装的插件进不了运行，所以公司包做成给同事自己用的 sidekick 插件，放在公司那边：装好或升级 sidekick、把公司统一的 deny 规则和按公司工具调过的 Slack 流程写进工作区、陪着写分身。等本仓公开（安装脚本才能下载）后再提，草稿先给使用者看。本仓不写公司仓库和内部插件的名字。
+- 提效（2026-11-18，使用者提出，会话 47b9cf72）。依据是 11-13 起的账本和运行日志：
+  - 同一对话的追问：每条都重跑、接着同一个会话，越跑越贵（「好了」「欧克」「那你发吧」「hao wo kankan」四次 $0.43 → $1.89）。现在等对话停一分钟再跑，连着几条合成一次；已处理完的对话里的收尾话（好了、欧克、哈哈、emoji）只记下、不重跑（`intake.ts`）。
+  - 每次运行只装需要的（`handle.ts` ToolSet）：原来带着 Claude Code 全部内置工具和 75 个 claude.ai 连接器，一轮 65.7k token；57/84 次运行先花一轮 ToolSearch 找 sidekick 自己的工具，约一半花一轮 `cat SKILL.md`。现在默认只给 Bash、Read、Grep、Glob 和 sidekick 的工具，一轮 33k；消息里有 Slack、GitHub 以外的链接才带连接器；skill 和分身一样放进系统提示。会话只升不降。同两条历史消息试跑：$0.43 → $0.23，$0.87 → $0.19。工作区的 CLAUDE.md 留着（约 9k，agent 找仓库靠它）。
+  - PR：team btp、team lemonade 的人发 PR 来直接 approve，回「已 approve ✅」不经审批（profile 的 `autoReply`，代码判断发信人和原文，`mcp.ts`）；其他人的快速 review 后 approve。规则写在工作区的决策模型里。
+  - 要我拍板的事：起草 2–3 条候选回复（`propose` 的 `options`），我在审批卡上挑一条发；带候选的永远等我批，全托管也不例外。
+  - 「在 Claude 里继续」（原名在 Claude Code 里继续）也在通知上；我在 Slack 里删掉草稿时，弹一条通知给这个按钮。
+  - 只在重试 API 的运行（断网、睡眠）5 分钟就停，10 分钟后再跑，不算失败；原来要等满 40 分钟超时，还连试三次。
+  - 派活时带 Slack 消息链接，任务挂到那个对话上，回复走审批卡发进那个 thread。
 - 还没做：
   - 公司包的 PR（见上一条）。
   - 开发者签名：没有签名，「登录项」里显示的是 sidekick 这个可执行文件而不是 Sidekick.app。有了 Developer ID 和公证才能回到 SMAppService，Gatekeeper 也不用担心。

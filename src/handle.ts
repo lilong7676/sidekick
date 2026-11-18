@@ -2,6 +2,7 @@
 // starts the run, and turns the run's outcome into the next task status.
 
 import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import { getTask, setTaskStatus, type ApprovalRow, type EventRow, type TaskRow } from "./db.ts";
@@ -50,6 +51,54 @@ const FULL_MODE_RULES = [
 
 const KIND_LABEL: Record<string, string> = { dm: "私信给使用者", mention: "在频道、群聊或 thread 里 @ 了使用者" };
 
+/**
+ * What a run is given besides the persona and the workspace. Measured 2026-11-18 with one Haiku turn in
+ * the work workspace: everything Claude Code offers made 65.7k tokens of context; without the other MCP
+ * servers (75 claude.ai connectors) 55.6k; with only Bash, Read, Grep and Glob 30.6k. Of 84 runs, 57
+ * spent a turn on ToolSearch to find sidekick's own tools among all of them; about 10 used a connector,
+ * for a Notion, Jira or Google link.
+ *   lean   Bash, Read, Grep, Glob and sidekick's tools; no other MCP server.
+ *   links  the same plus the claude.ai connectors, which are deferred (so ToolSearch too): for a message
+ *          that links somewhere slackcli and gh cannot read.
+ *   null   a session started before tool sets: everything, as it had.
+ * A session never loses a tool once given, since its history may call it: it only goes up.
+ */
+export type ToolSet = "lean" | "links";
+
+const LEAN_TOOLS = "Bash,Read,Grep,Glob";
+
+/** A link only a connector can read (Notion, Jira, Google…): any but Slack and GitHub, which slackcli and gh read. */
+export function needsConnectors(text: string): boolean {
+  for (const m of text.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)) {
+    if (!/(^|\.)(slack\.com|github\.com|githubusercontent\.com)$/i.test(m[1])) return true;
+  }
+  return false;
+}
+
+/** The tool set for a run: what its session already has when resumed (never less), links when the text needs them. */
+export function toolSetFor(current: string | null, resume: boolean, text: string): ToolSet | null {
+  if (resume && current === null) return null;
+  if ((resume && current === "links") || needsConnectors(text)) return "links";
+  return "lean";
+}
+
+function toolFlags(set: ToolSet | null | undefined): Pick<LaunchSpec, "tools" | "strictMcp"> {
+  if (set === "lean") return { tools: LEAN_TOOLS, strictMcp: true };
+  if (set === "links") return { tools: `${LEAN_TOOLS},ToolSearch` };
+  return {};
+}
+
+/**
+ * The stage's workflow skill, put into the system prompt like the persona: the prompt used to say "read
+ * it first", and about half the runs spent a turn on `cat SKILL.md` (2026-11-18).
+ */
+function skillPrompt(root: string, skill: string | undefined): string {
+  const path = skill ? join(root, skill) : "";
+  if (!path || !existsSync(path)) return "";
+  const body = readFileSync(path, "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").trim();
+  return `# 处理流程（${skill}）\n\n${body}`;
+}
+
 export function slackTaskPrompt(profile: Profile, task: TaskRow, ev: EventRow, link: string, context: Array<{ ts: string; who: string; mine: boolean; text: string; files: string[] }>): string {
   const lines = context.map((l) => `[${l.ts}] ${l.mine ? "我（使用者）" : l.who}: ${clip(l.text, 1500)}${l.files.length ? ` [文件 ${l.files.join(", ")}]` : ""}`);
   return [
@@ -68,7 +117,7 @@ export function slackTaskPrompt(profile: Profile, task: TaskRow, ev: EventRow, l
     ...lines,
     ">>>",
     "",
-    `先完整读 ${profile.agent.skill}，按里面的流程处理。`,
+    `按系统提示里的处理流程（${profile.agent.skill}）处理，不用再读这个文件。`,
     "要回复就调用 mcp__sidekick__propose（kind=slack.reply），最后调用 mcp__sidekick__report。",
   ].join("\n");
 }
@@ -80,7 +129,7 @@ export function manualTaskPrompt(profile: Profile, task: TaskRow, request: strin
     "",
     request,
     "",
-    ...(profile.manual.skill ? [`先完整读 ${profile.manual.skill}。`] : []),
+    ...(profile.manual.skill ? [`按系统提示里的处理流程（${profile.manual.skill}）处理，不用再读这个文件。`] : []),
     ...(linked
       ? ["这个任务挂在上面那条 Slack 链接所在的对话上。要回复对方，用 mcp__sidekick__propose 提交 slack.reply：回复会进那个对话（链接在 thread 里就进那个 thread），使用者审批后发出。"]
       : []),
@@ -88,12 +137,12 @@ export function manualTaskPrompt(profile: Profile, task: TaskRow, request: strin
   ].join("\n");
 }
 
-/** Engine rules, full-mode rules, then the persona (read fresh for every run). */
-export function systemPrompt(profile: Pick<Profile, "root" | "persona">, mode: Settings["mode"]): string {
-  return [SYSTEM_RULES, mode === "full" ? FULL_MODE_RULES : "", personaPrompt(profile)].filter(Boolean).join("\n\n");
+/** Engine rules, full-mode rules, the persona, then the stage's workflow skill (both read fresh for every run). */
+export function systemPrompt(profile: Pick<Profile, "root" | "persona">, mode: Settings["mode"], skill?: string): string {
+  return [SYSTEM_RULES, mode === "full" ? FULL_MODE_RULES : "", personaPrompt(profile), skillPrompt(profile.root, skill)].filter(Boolean).join("\n\n");
 }
 
-export function launchSpec(profile: Profile, task: TaskRow, runId: string, dbPath: string, settings: Pick<Settings, "mode" | "model" | "effort"> = { mode: "semi" }): LaunchSpec {
+export function launchSpec(profile: Profile, task: TaskRow, runId: string, dbPath: string, settings: Pick<Settings, "mode" | "model" | "effort"> = { mode: "semi" }, toolSet?: ToolSet | null): LaunchSpec {
   const manual = task.source === "manual";
   const stage = manual ? profile.manual : profile.agent;
   const deny = [...ENGINE_DENY, ...profile.policy.deny];
@@ -109,7 +158,8 @@ export function launchSpec(profile: Profile, task: TaskRow, runId: string, dbPat
     deny,
     guardPolicyPath: writeGuardPolicy(join(profile.stateDir, "runs"), runId, { ask: profile.policy.ask, deny }),
     sidekickMcp: { dbPath, taskId: task.id, runId, waitMs: profile.approvals.waitMinutes * 60_000, profileRoot: profile.root, mode: settings.mode, autoReply: profile.autoReply },
-    appendSystemPrompt: systemPrompt(profile, settings.mode),
+    ...toolFlags(toolSet),
+    appendSystemPrompt: systemPrompt(profile, settings.mode, stage.skill),
     timeoutMs: profile.agent.timeoutMinutes * 60_000,
   };
 }
@@ -151,7 +201,9 @@ export async function startTaskRun(profile: Profile, db: Database, task: TaskRow
     prompt = manualTaskPrompt(profile, task, task.next_prompt ?? task.title, task.event_id !== null);
   }
 
-  const spec = launchSpec(profile, task, runId, dbPath, runSettings()); // the mode in force now holds for the whole run
+  const toolSet = toolSetFor(task.tool_set, resume, prompt);
+  const spec = launchSpec(profile, task, runId, dbPath, runSettings(), toolSet); // the mode in force now holds for the whole run
+  if (toolSet !== task.tool_set) db.prepare("UPDATE tasks SET tool_set = ? WHERE id = ?").run(toolSet, task.id);
   const logPath = join(profile.stateDir, "runs", `${runId}.jsonl`);
   const handle = startRun(spec, prompt, { id: sessionId, resume }, logPath, join(profile.stateDir, "runs"));
   db.prepare("INSERT INTO runs (id, task_id, stage, session_id, pid, started_at, log_path) VALUES (?, ?, 'agent', ?, ?, ?, ?)")

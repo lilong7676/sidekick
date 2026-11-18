@@ -51,6 +51,8 @@ export interface TaskRow {
   handed_off_at: number | null;
   /** Off-hours Slack work waits until then (intake.ts, settings workHours); null: runs when its turn comes. */
   not_before: number | null;
+  /** The tools its session was given (handle.ts ToolSet); null: a session from before tool sets, given everything. */
+  tool_set: string | null;
 }
 
 export interface RunRow {
@@ -126,7 +128,8 @@ export function openDb(stateDir: string): Database {
       updated_at  INTEGER NOT NULL,
       notified_status TEXT,
       handed_off_at INTEGER,
-      not_before  INTEGER
+      not_before  INTEGER,
+      tool_set    TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, updated_at);
 
@@ -170,6 +173,7 @@ export function openDb(stateDir: string): Database {
   for (const col of ["handed_off_at", "not_before"]) {
     if (!taskColumns.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} INTEGER`);
   }
+  if (!taskColumns.includes("tool_set")) db.exec("ALTER TABLE tasks ADD COLUMN tool_set TEXT");
   return db;
 }
 

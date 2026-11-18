@@ -104,6 +104,10 @@ a { color: var(--info); }
 .card.approval.pending { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
 .card-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .quote { white-space: pre-wrap; word-break: break-word; padding: 2px 0 4px; }
+/* Candidate replies on an approval card (mcp.ts propose options). */
+.choices { display: flex; flex-direction: column; gap: 8px; margin: 4px 0; }
+.choice { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.choice .actions { margin-top: 4px; }
 textarea.reply { margin: 4px 0; }
 .actions { display: flex; gap: 6px; align-items: center; margin: 8px 0 2px; flex-wrap: wrap; }
 .actions input { flex: 1; min-width: 160px; width: auto; }

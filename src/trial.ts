@@ -6,7 +6,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import type { EventRow, TaskRow } from "./db.ts";
-import { launchSpec, slackTaskPrompt } from "./handle.ts";
+import { launchSpec, slackTaskPrompt, toolSetFor } from "./handle.ts";
 import { t } from "./i18n.ts";
 import { startRun, type RunHandle } from "./runner.ts";
 import { loadSettings } from "./settings.ts";
@@ -16,7 +16,7 @@ import { clip, extractJson, log, newId } from "./util.ts";
 const TRIAL_RULES = [
   "这是一次试跑，用来检验使用者的分身资料写得好不好。假装现在是这条消息刚到的时候：上下文里只有它之前的消息。",
   "这次没有 mcp__sidekick__propose 和 mcp__sidekick__report：skill 里要你调用它们的地方，都改成最后输出下面的 JSON。",
-  "只读：可以按 skill 查资料，但不要发消息、建草稿、加 reaction、评论、流转，也不要改任何文件。",
+  "只读：可以按 skill 查资料，但不要发消息、建草稿、加 reaction、评论、流转、approve、合并、部署，也不要改任何文件。规则里让你直接做的动作（比如直接 approve PR），这里都只写进 JSON 说你会做什么。",
   "最后只输出一个 JSON 对象，不要代码块，不要别的话：",
   '{"action":"reply、no_reply 或 needs_me","judgement":"为什么这样判断，一两句","draft":"要回复时的正文，否则 null"}',
 ].join("\n");
@@ -111,7 +111,7 @@ export class Trials {
     const prompt = `${slackTaskPrompt(profile, task, ev, permalink(me, ev.channel!, ev.ts!, ev.thread_ts), context)}\n\n${TRIAL_RULES}`;
     const runDir = join(profile.stateDir, "runs");
     // The same launch as a real task (model, rules, persona, deny list), minus the sidekick tools.
-    const spec = { ...launchSpec(profile, task, trial.id, join(profile.stateDir, "sidekick.db"), loadSettings()), sidekickMcp: undefined };
+    const spec = { ...launchSpec(profile, task, trial.id, join(profile.stateDir, "sidekick.db"), loadSettings(), toolSetFor(null, false, prompt)), sidekickMcp: undefined };
     log(`trial: ${trial.id} on event ${ev.id}`);
     this.handle = startRun(spec, prompt, { id: crypto.randomUUID(), resume: false }, join(runDir, `${trial.id}.jsonl`), runDir);
     const r = await this.handle.done;

@@ -14,6 +14,8 @@ export interface LaunchSpec {
   maxTurns: number;
   /** "" disables every built-in tool (stage 1). Omit for the default set. */
   tools?: string;
+  /** No MCP servers but sidekick's own: not the user's, the workspace's, nor the claude.ai connectors (handle.ts ToolSet). */
+  strictMcp?: boolean;
   /** Skip user-level settings, plugins and connectors (ADR 0003 ④). */
   lean: boolean;
   allow: string[];
@@ -106,6 +108,7 @@ export function claudeArgs(spec: LaunchSpec, prompt: string, session: { id: stri
   if (spec.allow.length) args.push("--allowedTools", ...spec.allow);
   if (spec.deny.length) args.push("--disallowedTools", ...spec.deny);
   if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath, "--permission-prompt-tool", "mcp__sidekick__approve");
+  if (spec.strictMcp) args.push("--strict-mcp-config", ...(mcpConfigPath ? [] : ["--mcp-config", '{"mcpServers":{}}']));
   if (spec.appendSystemPrompt) args.push("--append-system-prompt", spec.appendSystemPrompt);
   for (const d of spec.addDirs ?? []) args.push("--add-dir", d);
   return args;

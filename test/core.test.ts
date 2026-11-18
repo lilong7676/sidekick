@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AUTO_NOTE, DELETED_IN_SLACK, processDecisions, decide, reconcileDrafts, replyBlocks, RULE_NOTE, SENT_IN_SLACK, SIGN_APPROVED, SIGN_AUTO } from "../src/approvals.ts";
 import { getTask, openDb, type EventRow } from "../src/db.ts";
-import { autoReplyAllowed, autoReplyRules, decidePermission, PENDING_MESSAGE, proposeSlackReply, replyTarget } from "../src/mcp.ts";
+import { autoReplyAllowed, autoReplyRules, decidePermission, PENDING_MESSAGE, proposeSlackReply, replyOptions, replyTarget } from "../src/mcp.ts";
 import { API_STALL_MS, apiStall, claudeArgs, takeoverArgs, type LaunchSpec } from "../src/runner.ts";
 import { parsePermalink, pickSlackMessages, type UnreadRich } from "../src/slack.ts";
-import { ENGINE_DENY, manualTaskPrompt, RETRY_LATER_MS, sessionFor, settle } from "../src/handle.ts";
+import { ENGINE_DENY, manualTaskPrompt, needsConnectors, RETRY_LATER_MS, sessionFor, settle, systemPrompt, toolSetFor } from "../src/handle.ts";
 import { addManualTask, continueInClaude, processNow, recentlyDeletedDrafts, slackPeople } from "../src/queries.ts";
 import { approvalLine } from "../src/notify.ts";
 import { setLang } from "../src/i18n.ts";
@@ -897,5 +897,70 @@ describe("a draft I deleted in Slack offers to carry on in Claude", () => {
     add("a3", "t1", SENT_IN_SLACK, now - 60_000);
     add("a4", "t2", DELETED_IN_SLACK, now - 60_000);
     expect(recentlyDeletedDrafts(db, now)).toEqual([{ approvalId: "a1", taskId: "t1", title: "task t1" }]);
+  });
+});
+
+// A run used to get every tool Claude Code has and all 75 claude.ai connectors: 65.7k tokens of context
+// a turn, plus a turn on ToolSearch and one on `cat SKILL.md`. Now a lean set by default (2026-11-18).
+describe("what a run is given", () => {
+  test("only links slackcli and gh cannot read call for the connectors", () => {
+    expect(needsConnectors("review https://github.com/AfterShip/x/pull/1 dd")).toBe(false);
+    expect(needsConnectors("看下 https://aftership.slack.com/archives/C1/p1794909984018279")).toBe(false);
+    expect(needsConnectors("没有链接")).toBe(false);
+    expect(needsConnectors("文案在 <https://app.notion.com/p/automizely/x|这里>")).toBe(true);
+    expect(needsConnectors("https://aftership.atlassian.net/browse/APR-1")).toBe(true);
+  });
+
+  test("a new session starts lean or with links; a resumed one never loses tools", () => {
+    expect(toolSetFor(null, false, "hi")).toBe("lean");
+    expect(toolSetFor(null, false, "https://docs.google.com/x")).toBe("links");
+    expect(toolSetFor("lean", true, "那你发吧")).toBe("lean");
+    expect(toolSetFor("lean", true, "看这个 https://aftership.atlassian.net/browse/X")).toBe("links");
+    expect(toolSetFor("links", true, "好")).toBe("links");
+    expect(toolSetFor(null, true, "好")).toBeNull(); // a session from before tool sets keeps everything
+    expect(toolSetFor("links", false, "hi")).toBe("lean"); // a new session after a hand-off starts afresh
+  });
+
+  test("the launch flags for each set", () => {
+    const base: LaunchSpec = { cwd: "/w", model: "m", maxTurns: 5, lean: true, allow: [], ask: [], deny: [], timeoutMs: 1 };
+    const lean = claudeArgs({ ...base, tools: "Bash,Read,Grep,Glob", strictMcp: true }, "p", { id: "s", resume: false }, "/tmp/m.json");
+    expect(lean.join(" ")).toContain("--tools Bash,Read,Grep,Glob");
+    expect(lean).toContain("--strict-mcp-config");
+    const links = claudeArgs({ ...base, tools: "Bash,Read,Grep,Glob,ToolSearch" }, "p", { id: "s", resume: false }, "/tmp/m.json");
+    expect(links).not.toContain("--strict-mcp-config");
+    const trial = claudeArgs({ ...base, strictMcp: true }, "p", { id: "s", resume: false });
+    expect(trial.join(" ")).toContain('--strict-mcp-config --mcp-config {"mcpServers":{}}');
+  });
+
+  test("the workflow skill is in the system prompt, without its front matter", () => {
+    const root = mkdtempSync(join(tmpdir(), "sidekick-skill-"));
+    mkdirSync(join(root, "skills/s"), { recursive: true });
+    writeFileSync(join(root, "skills/s/SKILL.md"), "---\nname: s\ndescription: x\n---\n\n# 处理一条消息\n\n先看决策模型。\n");
+    writeFileSync(join(root, "me.md"), "# 我");
+    const prompt = systemPrompt({ root, persona: ["me.md"] }, "semi", "skills/s/SKILL.md");
+    expect(prompt).toContain("# 处理流程（skills/s/SKILL.md）");
+    expect(prompt).toContain("先看决策模型。");
+    expect(prompt).not.toContain("description: x");
+  });
+});
+
+// A decision that is mine (a time, a priority) used to end as "needs you" with no draft. Now the
+// agent drafts two or three candidates and I pick one on the card (2026-11-18).
+describe("candidate replies", () => {
+  test("up to two others, non-empty, not repeating the main text", () => {
+    expect(replyOptions(["明天上午给你", " ", "今天下班前", "今天下班前", 3, "下周一"], "今天下班前")).toEqual(["明天上午给你", "下周一"]);
+    expect(replyOptions(["a", "b", "c"], "x")).toEqual(["a", "b"]);
+    expect(replyOptions(undefined, "x")).toEqual([]);
+  });
+
+  test("a card with candidates keeps them all and always waits for me, even in full mode", async () => {
+    const db = freshDb();
+    seedTask(db, "running", { kind: "mention", channel: "C9", ts: "5.5" });
+    const said = await proposeSlackReply(db, "t1", "r1", "今天下班前看完", "要你定时间", () => "Dr1", true, () => {}, AUTO_NOTE, ["明天上午给你"]);
+    expect(said).toContain("2 条候选");
+    const row = db.prepare("SELECT status, payload FROM approvals").get() as { status: string; payload: string };
+    expect(row.status).toBe("pending");
+    expect(JSON.parse(row.payload).choices).toEqual(["今天下班前看完", "明天上午给你"]);
+    expect(approvalLine({ kind: "outbound", payload: row.payload }, "Leo：review", "")).toContain("另有 1 条候选");
   });
 });

@@ -105,6 +105,7 @@ export async function proposeSlackReply(
   auto = false,
   discardDraft: (draftId: string) => void | Promise<void> = deleteDraft,
   note: string = AUTO_NOTE,
+  options: string[] = [],
 ): Promise<string> {
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as TaskRow | null;
   const ev = task?.event_id ? (db.prepare("SELECT * FROM events WHERE id = ?").get(task.event_id) as EventRow | null) : null;
@@ -138,12 +139,16 @@ export async function proposeSlackReply(
   }
   const id = newId("a");
   const now = Date.now();
+  // Candidates mean a decision is mine to make: such a card always waits for me, whatever the mode.
+  const choices = options.length ? [body, ...options] : undefined;
+  if (choices) auto = false;
   db.prepare(`INSERT INTO approvals (id, task_id, run_id, kind, key, payload, created_at, status, decision_note, decided_at)
               VALUES (?, ?, ?, 'outbound', ?, ?, ?, ?, ?, ?)`)
-    .run(id, taskId, runId, hash({ kind: "slack.reply", body }), JSON.stringify({ kind: "slack.reply", ...target, text: body, reason, draftId, draftError }), now,
+    .run(id, taskId, runId, hash({ kind: "slack.reply", body }), JSON.stringify({ kind: "slack.reply", ...target, text: body, reason, draftId, draftError, ...(choices ? { choices } : {}) }), now,
       auto ? "approved" : "pending", auto ? note : null, auto ? now : null);
   if (auto && note === RULE_NOTE) return "按 profile 的 autoReply 规则，这条回复不用审批，会在本轮结束后直接发出。本轮可以结束了。";
   if (auto) return "全托管模式：这条回复会在本轮结束后直接发出。本轮可以结束了。";
+  if (choices) return `已提交审批：使用者会在这 ${choices.length} 条候选里挑一条发出（或改了再发）。本轮可以结束了。`;
   return draftId
     ? "已在 Slack 输入框里建好草稿，并提交给使用者审批。本轮可以结束了。"
     : "已提交给使用者审批（Slack 草稿没建成，审批通过后会直接发送）。本轮可以结束了。";
@@ -153,6 +158,21 @@ export function report(db: Database, taskId: string, outcome: string, summary: s
   db.prepare("UPDATE tasks SET outcome = ?, summary = ?, updated_at = ? WHERE id = ?")
     .run(outcome, evidence ? `${summary}\n\n证据：${evidence}` : summary, Date.now(), taskId);
   return "已记录。";
+}
+
+/** The other candidate replies a proposal carries: up to two, non-empty, not repeating the main text. */
+export function replyOptions(raw: unknown, text: string): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set([text.trim()]);
+  const out: string[] = [];
+  for (const o of raw) {
+    if (typeof o !== "string") continue;
+    const s = o.trim().slice(0, 8000);
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out.slice(0, 2);
 }
 
 /** profile.yaml autoReply, handed over by runner.ts. Anything unreadable means no rules: nothing goes out unseen by mistake. */
@@ -191,8 +211,14 @@ export async function serveMcp(): Promise<void> {
           type: "object",
           properties: {
             kind: { type: "string", enum: ["slack.reply"] },
-            text: { type: "string", description: "要发出的完整回复正文" },
+            text: { type: "string", description: "要发出的完整回复正文；有候选时是你最推荐的那条" },
             reason: { type: "string", description: "一句话说明为什么这样回，给审批的人看" },
+            options: {
+              type: "array",
+              items: { type: "string" },
+              maxItems: 2,
+              description: "要使用者拍板时（承诺时间、排期、口径），另外 1–2 条取向不同的候选回复，每条都是完整正文。使用者在审批卡上挑一条发；带候选的回复永远等使用者批，不会自动发出。",
+            },
           },
           required: ["kind", "text"],
         },
@@ -223,9 +249,10 @@ export async function serveMcp(): Promise<void> {
         // The run's own mode, not the one in force now: a reply drafted under semi-mode rules never goes out
         // unseen because full mode began (by hand or on a timetable) while it was being written.
         {
+          const options = replyOptions(a.options, a.text);
           const full = process.env.SIDEKICK_MODE === "full";
-          const byRule = !full && await autoReplyAllowed(db, taskId, a.text, autoReplyRules());
-          return text(await proposeSlackReply(db, taskId, runId, a.text, String(a.reason ?? ""), createDraft, full || byRule, deleteDraft, byRule ? RULE_NOTE : AUTO_NOTE));
+          const byRule = !full && !options.length && await autoReplyAllowed(db, taskId, a.text, autoReplyRules());
+          return text(await proposeSlackReply(db, taskId, runId, a.text, String(a.reason ?? ""), createDraft, full || byRule, deleteDraft, byRule ? RULE_NOTE : AUTO_NOTE, options));
         }
       case "report":
         return text(report(db, taskId, String(a.outcome), String(a.summary ?? ""), a.evidence ? String(a.evidence) : undefined));

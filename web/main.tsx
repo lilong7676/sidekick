@@ -158,7 +158,10 @@ const decisionNote = (note: string) =>
 
 function ApprovalCard({ a, onDone }: { a: Approval; onDone: () => void }) {
   const original: string = a.kind === "outbound" ? String(a.payload.text ?? "") : "";
+  // Candidates (mcp.ts propose options): a decision that is mine; pick one to send, or edit one first.
+  const choices: string[] | null = Array.isArray(a.payload.choices) && a.payload.choices.length > 1 ? a.payload.choices.map(String) : null;
   const [text, setText] = useState(original);
+  const [editing, setEditing] = useState(!choices);
   const [note, setNote] = useState("");
   const [denying, setDenying] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -187,7 +190,20 @@ function ApprovalCard({ a, onDone }: { a: Approval; onDone: () => void }) {
       </div>
       {a.kind === "outbound" ? (
         <>
-          {pending ? (
+          {pending && choices && !editing ? (
+            <div class="choices">
+              <div class="muted small">{t("要你拍板：挑一条发，或者改一改再发。", "Your call: send one of these, or edit one first.")}</div>
+              {choices.map((c, i) => (
+                <div key={i} class="choice">
+                  <div class="quote">{c}</div>
+                  <div class="actions">
+                    <button class={i === 0 ? "primary" : ""} disabled={busy} onClick={() => act("approve", c === original ? {} : { text: c })}>{t("发这条", "Send this")}</button>
+                    <button disabled={busy} onClick={() => { setText(c); setEditing(true); }}>{t("改一改", "Edit")}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : pending ? (
             <textarea class="reply" rows={Math.min(10, Math.max(3, text.split("\n").length + 1))} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
           ) : (
             <div class="quote">{original}</div>
@@ -210,9 +226,12 @@ function ApprovalCard({ a, onDone }: { a: Approval; onDone: () => void }) {
         <div class="actions">
           {!denying ? (
             <>
-              <button class="primary" disabled={busy || (a.kind === "outbound" && !text.trim())} onClick={() => act("approve", edited ? { text } : {})}>
-                {a.kind === "outbound" ? (edited ? t("改后发送", "Send edited") : t("批准发送", "Approve and send")) : t("批准", "Approve")}
-              </button>
+              {editing && (
+                <button class="primary" disabled={busy || (a.kind === "outbound" && !text.trim())} onClick={() => act("approve", edited ? { text } : {})}>
+                  {a.kind === "outbound" ? (edited ? t("改后发送", "Send edited") : t("批准发送", "Approve and send")) : t("批准", "Approve")}
+                </button>
+              )}
+              {choices && editing && <button disabled={busy} onClick={() => setEditing(false)}>{t("回到候选", "Back to the choices")}</button>}
               <button disabled={busy} onClick={() => setDenying(true)}>{t("拒绝…", "Deny…")}</button>
             </>
           ) : (
