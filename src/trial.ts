@@ -6,6 +6,7 @@ import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import type { EventRow, TaskRow } from "./db.ts";
+import { runFacts } from "./facts.ts";
 import { launchSpec, slackTaskPrompt, toolSetFor } from "./handle.ts";
 import { t } from "./i18n.ts";
 import { startRun, type RunHandle } from "./runner.ts";
@@ -108,7 +109,9 @@ export class Trials {
       log(`trial: context for event ${ev.id} failed: ${String(e).slice(0, 200)}`);
     }
     const task = { id: trial.id, source: "slack" } as TaskRow;
-    const prompt = `${slackTaskPrompt(profile, task, ev, permalink(me, ev.channel!, ev.ts!, ev.thread_ts), context)}\n\n${TRIAL_RULES}`;
+    const base = slackTaskPrompt(profile, task, ev, permalink(me, ev.channel!, ev.ts!, ev.thread_ts), context);
+    const facts = await runFacts(profile, base, ev.user_id ? [{ id: ev.user_id, name: ev.user_name }] : []);
+    const prompt = [base, facts, TRIAL_RULES].filter(Boolean).join("\n\n");
     const runDir = join(profile.stateDir, "runs");
     // The same launch as a real task (model, rules, persona, deny list), minus the sidekick tools.
     const spec = { ...launchSpec(profile, task, trial.id, join(profile.stateDir, "sidekick.db"), loadSettings(), toolSetFor(null, false, prompt)), sidekickMcp: undefined };

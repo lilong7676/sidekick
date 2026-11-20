@@ -53,6 +53,9 @@ function skipReason(ev: EventRow, rules: IntakeRules): string | null {
     const where = `#${ev.channel_name ?? ev.channel}`;
     return t(`按规则跳过：不处理 ${where} 里的 @。`, `Skipped by a rule: skip @-mentions in ${where}.`);
   }
+  if (isClosing(ev.text)) {
+    return t("按规则跳过：只是一句收尾的话（好的、谢谢、表情），不用回。", "Skipped by a rule: only a closing word (ok, thanks, an emoji), nothing to answer.");
+  }
   return null;
 }
 
@@ -71,18 +74,20 @@ function quietUntil(ev: EventRow, hold: number | null, now = Date.now()): number
 }
 
 /**
- * A message that only closes a conversation: thanks, ok, a laugh, an emoji. In a conversation that is
- * already handled it is kept with the task but not worked on again; the agent always found no reply
- * was needed, and each such run still cost $0.4–1.9 (2026-11-18).
+ * A message that only closes a conversation: thanks, ok, a laugh, an emoji. Not worked on: in a
+ * conversation already handled it is kept with the task, and one it opens is skipped (skipReason). The
+ * agent always found no reply was needed, and each such run still cost $0.4–3.8: 3 of the first 60
+ * conversations opened with one (2026-11-19). A bare @ is not one: it asks me to look at the thread.
  */
 export function isClosing(text: string | null): boolean {
-  const s = (text ?? "")
-    .replace(/<@[A-Z0-9]+>/g, "")
+  const rest = (text ?? "").replace(/<@[A-Z0-9]+>/g, "");
+  if (!rest.trim()) return false; // nothing, or only a mention
+  const s = rest
     .replace(/:[a-z0-9_+'-]+:/gi, "")
     .replace(/[\s.,!?~。，！？～…、]+/g, "")
     .replace(/\p{Extended_Pictographic}|\u{FE0F}|\u{200D}/gu, "")
     .toLowerCase();
-  if (!s) return true; // only emoji or mentions
+  if (!s) return true; // only emoji
   return /^(好|好的|好滴|好嘞|好哒|好了|嗯+|哦+|噢+|ok+|okay|欧克|收到|了解|明白|知道了|谢谢|谢啦|多谢|感谢|辛苦|辛苦了|thx|thanks|thankyou|ty|哈+|h+a+|nice|cool|牛|棒)$/.test(s);
 }
 

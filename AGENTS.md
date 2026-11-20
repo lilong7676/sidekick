@@ -37,8 +37,9 @@ src/
   persona.ts        分身：读写（防覆盖）、拼进每次运行的系统提示
   trial.ts          试跑：拿历史消息按分身走一遍，只读、不建任务
   setup.ts          首次设置 / 换工作区：没有 profile 的文件夹按模板建好
-  intake.ts         Slack 消息 → 任务（同一对话合并）；跳过规则、下班时间只收不处理
+  intake.ts         Slack 消息 → 任务（同一对话合并）；跳过规则、收尾话、下班时间只收不处理
   handle.ts         处理一个任务：prompt、启动参数、跑完后的状态
+  facts.ts          运行前查好、写进 prompt 的事实：发信人在哪些用户组、消息里 PR 的状态
   runner.ts         spawn claude -p（接口按 ACP 形状）
   mcp.ts            sidekick MCP：approve / propose / report
   guard.ts          PreToolUse hook：变体写法的 ask / deny

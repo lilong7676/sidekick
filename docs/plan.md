@@ -402,6 +402,9 @@ claude -p "<prompt>"
   - 「在 Claude 里继续」（原名在 Claude Code 里继续）也在通知上；我在 Slack 里删掉草稿时，弹一条通知给这个按钮。
   - 只在重试 API 的运行（断网、睡眠）5 分钟就停，10 分钟后再跑，不算失败；原来要等满 40 分钟超时，还连试三次。
   - 派活时带 Slack 消息链接，任务挂到那个对话上，回复走审批卡发进那个 thread。
+- 提效第二轮（2026-11-19，会话 47b9cf72，借鉴 DeepSeek 的 Super-agent 文章：规则判断得了的不交给模型，模型要查的事实先查好放进上下文）：
+  - 运行前查好的事实（`facts.ts`）：发消息的人在不在 profile 的 `autoReply` 里提到的 Slack 用户组里（缓存一小时），消息里 GitHub PR 的状态、作者、review 状态、使用者 review 过没有（`gh pr view`，最多 3 个），写在 prompt 末尾。原来每个 PR 请求要 agent 自己跑两次 `slackcli usergroups read` 和一次 `gh pr view`。查不到的不写，agent 照旧自己查。
+  - 收尾话开头的新对话直接按规则跳过（`intake.ts`）：60 个对话里有 3 个是「欧克」「:+1:」「好了」，agent 都判了不用回，共花 $5.4。只有一个 @、没有别的字不算收尾：那是请我看 thread。
 - 还没做：
   - 公司包的 PR（见上一条）。
   - 开发者签名：没有签名，「登录项」里显示的是 sidekick 这个可执行文件而不是 Sidekick.app。有了 Developer ID 和公证才能回到 SMAppService，Gatekeeper 也不用担心。

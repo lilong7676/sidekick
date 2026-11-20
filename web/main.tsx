@@ -357,7 +357,7 @@ function TaskDetail({ id, tick, onBack }: { id: string; tick: number; onBack: ()
         </div>
       )}
       {task.status === "closed" && task.outcome === "skipped" && (
-        <div class="actions"><span class="muted small">{t("按设置里的规则跳过了。", "Skipped by a rule in Settings.")}</span><button onClick={() => act("process")}>{t("仍然处理", "Process anyway")}</button></div>
+        <div class="actions"><span class="muted small">{t("按规则跳过了。", "Skipped by a rule.")}</span><button onClick={() => act("process")}>{t("仍然处理", "Process anyway")}</button></div>
       )}
       {err && <div class="error">{err}</div>}
 

@@ -256,16 +256,16 @@ export function mentionedUsers(text: string | null): Set<string> {
 
 const DRAFT_LIST_LIMIT = 500;
 
+/** A Slack user group (S…): its handle and member ids, for profile.yaml autoReply rules (mcp.ts) and run facts (facts.ts). */
+export async function usergroup(id: string): Promise<{ handle: string | null; members: string[] }> {
+  const g = await slackJson<{ handle?: string; member_ids?: string[] }>(["usergroups", "read", id, "--json", "--fields", "handle,member_ids"]);
+  return { handle: typeof g?.handle === "string" ? g.handle : null, members: Array.isArray(g?.member_ids) ? g.member_ids : [] };
+}
+
 /**
  * Ids of my drafts Slack still holds unsent (list-drafts leaves out sent and deleted ones). Null when
  * the list may be cut off, since then a missing draft could just be unlisted.
  */
-/** Member ids of a Slack user group (S…), for profile.yaml autoReply rules (mcp.ts). */
-export async function usergroupMembers(id: string): Promise<string[]> {
-  const g = await slackJson<{ member_ids?: string[] }>(["usergroups", "read", id, "--json", "--fields", "member_ids"]);
-  return Array.isArray(g?.member_ids) ? g.member_ids : [];
-}
-
 export async function liveDraftIds(): Promise<Set<string> | null> {
   const r = await slackJson<{ drafts?: Array<{ draft_id: string }> }>(["messages", "list-drafts", "--limit", String(DRAFT_LIST_LIMIT)]);
   const drafts = r.drafts ?? [];

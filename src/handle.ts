@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Profile } from "./config.ts";
 import { getTask, setTaskStatus, type ApprovalRow, type EventRow, type TaskRow } from "./db.ts";
+import { runFacts, type Sender } from "./facts.ts";
 import { t } from "./i18n.ts";
 import { personaPrompt } from "./persona.ts";
 import { startRun, writeGuardPolicy, type LaunchSpec, type RunHandle } from "./runner.ts";
@@ -173,6 +174,14 @@ export function sessionFor(task: Pick<TaskRow, "session_id" | "handed_off_at">):
   return { id: crypto.randomUUID(), resume: false };
 }
 
+/** Who wrote the messages this run sees for the first time: all of the task's, or those since its last run. */
+function newSenders(db: Database, taskId: string, resume: boolean): Sender[] {
+  const since = resume ? ((db.prepare("SELECT MAX(started_at) AS at FROM runs WHERE task_id = ?").get(taskId) as { at: number | null }).at ?? 0) : 0;
+  return db.prepare(`SELECT user_id AS id, MAX(user_name) AS name FROM events
+    WHERE task_id = ? AND source = 'slack' AND user_id IS NOT NULL AND received_at > ? GROUP BY user_id ORDER BY MIN(received_at)`)
+    .all(taskId, since) as Sender[];
+}
+
 /** Start the next run for a queued task. Returns null when the task cannot run right now. */
 export async function startTaskRun(profile: Profile, db: Database, task: TaskRow, onDone: (taskId: string) => void): Promise<RunHandle | null> {
   const dbPath = join(profile.stateDir, "sidekick.db");
@@ -200,6 +209,8 @@ export async function startTaskRun(profile: Profile, db: Database, task: TaskRow
   } else {
     prompt = manualTaskPrompt(profile, task, task.next_prompt ?? task.title, task.event_id !== null);
   }
+  const facts = await runFacts(profile, prompt, newSenders(db, task.id, resume));
+  if (facts) prompt += `\n\n${facts}`;
 
   const toolSet = toolSetFor(task.tool_set, resume, prompt);
   const spec = launchSpec(profile, task, runId, dbPath, runSettings(), toolSet); // the mode in force now holds for the whole run

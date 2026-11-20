@@ -16,7 +16,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import type { ApprovalRow, EventRow, TaskRow } from "./db.ts";
 import { AUTO_NOTE, RULE_NOTE } from "./approvals.ts";
 import type { Profile } from "./config.ts";
-import { createDraft, deleteDraft, usergroupMembers } from "./slack.ts";
+import { createDraft, deleteDraft, usergroup } from "./slack.ts";
 import { hash, log, newId, sleep, VERSION } from "./util.ts";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
@@ -68,7 +68,7 @@ export async function autoReplyAllowed(
   taskId: string,
   text: string,
   rules: Profile["autoReply"],
-  members: (group: string) => Promise<string[]> = usergroupMembers,
+  members: (group: string) => Promise<string[]> = async (group) => (await usergroup(group)).members,
 ): Promise<boolean> {
   const body = text.trim();
   const usable = rules.filter((r) => r.texts.some((x) => x.trim() === body));

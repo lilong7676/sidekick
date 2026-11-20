@@ -13,6 +13,7 @@ import { approvalLine } from "../src/notify.ts";
 import { setLang } from "../src/i18n.ts";
 import { Database } from "bun:sqlite";
 import { intakeSlack, isClosing, QUIET_MS } from "../src/intake.ts";
+import { groupLines, prLine, prLinks, profileGroups } from "../src/facts.ts";
 import type { Profile } from "../src/config.ts";
 
 const freshDb = () => openDb(mkdtempSync(join(tmpdir(), "sidekick-test-")));
@@ -542,14 +543,15 @@ describe("intake: Slack events become tasks", () => {
     const night = new Date(2026, 10, 17, 22, 30); // Tue 22:30
     const nine = new Date(2026, 10, 18, 9, 0).getTime();
     const hours = { ...DEFAULTS, workHours: { start: 9, end: 20, weekends: false } };
-    addEvent(db, { ts: at(0) });
+    const ts = (minutes: number) => (night.getTime() / 1000 + minutes * 60).toFixed(6); // the messages come that night
+    addEvent(db, { ts: ts(0) });
     intakeSlack(db, hours, night);
     expect(db.prepare("SELECT not_before FROM tasks").get()).toEqual({ not_before: nine });
     settle(db, "done");
-    addEvent(db, { ts: at(0.1) });
+    addEvent(db, { ts: ts(6) });
     intakeSlack(db, hours, night);
     expect(db.prepare("SELECT status, not_before FROM tasks").get()).toEqual({ status: "queued", not_before: nine });
-    addEvent(db, { kind: "mention", channel: "C1", ts: at(0.2) });
+    addEvent(db, { kind: "mention", channel: "C1", ts: ts(12) });
     intakeSlack(db, hours, new Date(2026, 10, 18, 10, 0)); // in working hours: no wait
     expect(db.prepare("SELECT not_before FROM tasks ORDER BY created_at DESC, rowid DESC").get()).toEqual({ not_before: null });
   });
@@ -613,12 +615,24 @@ describe("follow-ups: a burst is one run, and a closing word is not worked on", 
     expect(task(db).status).toBe("queued");
   });
 
+  test("a conversation opened by a closing word is skipped, still there to process anyway; a bare @ is not one", () => {
+    const db = freshDb();
+    addEvent(db, sec(0), ":+1:");
+    intakeSlack(db, RULES);
+    expect(db.prepare("SELECT status, outcome FROM tasks").get()).toEqual({ status: "closed", outcome: "skipped" });
+    processNow(db, task(db).id);
+    expect(task(db).status).toBe("queued");
+
+    const other = freshDb();
+    other.prepare(`INSERT INTO events (source, kind, dedupe_key, channel, ts, thread_ts, user_id, text, received_at)
+      VALUES ('slack', 'mention', 'k', 'C1', ?, '5.0', 'U1', '<@U0733BA64AE>', 0)`).run(sec(0));
+    intakeSlack(other, RULES);
+    expect(task(other).status).toBe("queued");
+  });
+
   test("what counts as a closing word", () => {
     for (const s of ["好了", "好的！", "欧克", "ok", "OK~", "收到", "谢谢", "哈哈哈", "嗯嗯", ":+1:", "👍👍", "<@U0733BA64AE> :pray:", "thanks!"]) expect(isClosing(s)).toBe(true);
-    for (const s of ["那你发吧", "hao wo kankan", "你慢慢搞", "好了吗？上了没", "ok 那我先合了", "可以按照这个改", ""]) {
-      if (s === "") expect(isClosing(s)).toBe(true);
-      else expect(isClosing(s)).toBe(false);
-    }
+    for (const s of ["那你发吧", "hao wo kankan", "你慢慢搞", "好了吗？上了没", "ok 那我先合了", "可以按照这个改", "", "<@U0733BA64AE>", " <@U1> <@U2> "]) expect(isClosing(s)).toBe(false);
   });
 });
 
@@ -962,5 +976,34 @@ describe("candidate replies", () => {
     expect(row.status).toBe("pending");
     expect(JSON.parse(row.payload).choices).toEqual(["今天下班前看完", "明天上午给你"]);
     expect(approvalLine({ kind: "outbound", payload: row.payload }, "Leo：review", "")).toContain("另有 1 条候选");
+  });
+});
+
+describe("facts looked up before a run", () => {
+  test("PR links: first ones first, each once, at most three", () => {
+    const text = "看下 <https://github.com/a/b/pull/12|#12> 和 https://github.com/a/b/pull/12 还有 https://github.com/c/d.e/pull/3 https://github.com/x/y/pull/4 https://github.com/x/y/pull/5 https://github.com/x/y/issues/6";
+    expect(prLinks(text)).toEqual([{ repo: "a/b", number: 12 }, { repo: "c/d.e", number: 3 }, { repo: "x/y", number: 4 }]);
+    expect(prLinks("no links")).toEqual([]);
+  });
+
+  test("which groups each sender is in, by handle", () => {
+    const groups = [{ id: "S1", handle: "team-a", members: ["U1"] }, { id: "S2", handle: null, members: [] }];
+    expect(groupLines([{ id: "U1", name: "Ann" }, { id: "U2", name: null }], groups)).toEqual([
+      "- 发消息的人 Ann（U1）在 @team-a 里，不在 S2 里。",
+      "- 发消息的人 U2（U2）不在 @team-a、S2 里。",
+    ]);
+    expect(groupLines([{ id: "U1", name: "Ann" }], [])).toEqual([]);
+    expect(profileGroups({ autoReply: [{ from: ["S1", "U9"], texts: ["x"] }, { from: ["S1", "S2"], texts: ["y"] }] })).toEqual(["S1", "S2"]);
+  });
+
+  test("a PR: state, review decision, and where the user stands", () => {
+    const pr = { title: "fix", author: { login: "bob" }, state: "OPEN", isDraft: false, reviewDecision: "REVIEW_REQUIRED",
+      reviewRequests: [{ login: "me" }], latestReviews: [{ author: { login: "bot" }, state: "COMMENTED" }] };
+    const ref = { repo: "a/b", number: 1 };
+    expect(prLine(ref, pr, "me")).toBe("- PR a/b#1「fix」：作者 bob；开着；review 状态：还要 review；使用者还没 review，在待 review 名单里。");
+    expect(prLine(ref, { ...pr, state: "MERGED", reviewDecision: "APPROVED", reviewRequests: [], latestReviews: [{ author: { login: "me" }, state: "APPROVED" }] }, "me"))
+      .toBe("- PR a/b#1「fix」：作者 bob；已合并；review 状态：已通过；使用者已经 approve 过。");
+    expect(prLine(ref, { ...pr, author: { login: "me" }, isDraft: true, reviewDecision: "" }, "me")).toBe("- PR a/b#1「fix」：作者 me（就是使用者自己）；开着，草稿；review 状态：没有要求。");
+    expect(prLine(ref, pr, null)).toBe("- PR a/b#1「fix」：作者 bob；开着；review 状态：还要 review。");
   });
 });
