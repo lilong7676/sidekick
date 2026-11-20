@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.1.0-beta.13",
+  "version": "0.1.0-beta.14",
   "private": true,
   "type": "module",
   "description": "A local agent dispatcher: Slack / manual events -> tasks -> Claude Code CLI, with human approval for outbound actions",
