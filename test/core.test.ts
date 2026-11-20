@@ -739,7 +739,8 @@ describe("slackcli calls do not block the daemon", () => {
       clearInterval(timer);
       expect(r.ok).toBe(true);
       expect(Date.now() - started).toBeGreaterThanOrEqual(900);
-      expect(ticks).toBeGreaterThanOrEqual(7); // a sync call would have left this at 0
+      // A sync call would have left this at 0. Not a count: a loaded CI runner managed 5 of ~9.
+      expect(ticks).toBeGreaterThan(0);
     } finally {
       if (prev === undefined) delete process.env.SIDEKICK_SLACKCLI;
       else process.env.SIDEKICK_SLACKCLI = prev;
