@@ -359,6 +359,9 @@ function TaskDetail({ id, tick, onBack }: { id: string; tick: number; onBack: ()
       {task.status === "closed" && task.outcome === "skipped" && (
         <div class="actions"><span class="muted small">{t("按规则跳过了。", "Skipped by a rule.")}</span><button onClick={() => act("process")}>{t("仍然处理", "Process anyway")}</button></div>
       )}
+      {task.muted_at && (
+        <div class="actions"><span class="muted small">{t("已忽略这个 thread：新消息只记下，不再处理。", "Thread muted: new messages are kept here, not worked on.")}</span><button onClick={() => act("unmute")}>{t("恢复处理", "Unmute")}</button></div>
+      )}
       {err && <div class="error">{err}</div>}
 
       {pending.map((a) => <ApprovalCard key={a.id} a={a} onDone={load} />)}
@@ -388,6 +391,14 @@ function TaskDetail({ id, tick, onBack }: { id: string; tick: number; onBack: ()
         )}
         {task.session_id && task.status === "paused" && <button onClick={() => act("takeover")}>{t("再开一次终端", "Open Terminal again")}</button>}
         {task.status === "running" && <ConfirmButton cls="danger" label={t("终止", "Stop")} confirmLabel={t("确认终止", "Confirm stop")} onConfirm={() => act("cancel")} />}
+        {task.thread && !task.muted_at && (
+          <button
+            onClick={() => act("mute")}
+            title={t("这个 thread 之后的新消息只记在这里，不再处理，直到你恢复；正在跑的会停下，已有的回复卡片留着", "New messages in this thread are kept here and not worked on until you unmute. A run in progress stops; reply cards already waiting stay.")}
+          >
+            {t("忽略这个 thread", "Mute thread")}
+          </button>
+        )}
         {open && task.status !== "running" && <button class="danger" onClick={() => act("cancel")}>{t("取消任务", "Cancel task")}</button>}
         <ConfirmButton cls="danger right" label={t("删除记录", "Delete record")} confirmLabel={t("确认删除", "Confirm delete")} onConfirm={remove} />
       </div>
@@ -519,7 +530,7 @@ function TaskList({ tab, tick, onOpen }: { tab: Tab; tick: number; onOpen: (id: 
     <ul class="tasks">
       {tasks.map((task) => (
         <li key={task.id} onClick={() => onOpen(task.id)}>
-          <div class="row-top"><Pill status={task.status} />{(task.pending_approvals ?? 0) > 0 && <span class="badge">{task.pending_approvals}</span>}<span class="muted small right">{ago(task.updated_at)}</span></div>
+          <div class="row-top"><Pill status={task.status} />{(task.pending_approvals ?? 0) > 0 && <span class="badge">{task.pending_approvals}</span>}{task.muted_at && <span class="muted small">{t("已忽略", "Muted")}</span>}<span class="muted small right">{ago(task.updated_at)}</span></div>
           <div class="title">{task.title}</div>
           <div class="muted small">
             {sourceLabel(task.kind)}

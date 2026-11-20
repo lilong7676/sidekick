@@ -8,7 +8,7 @@ import { autoReplyAllowed, autoReplyRules, decidePermission, PENDING_MESSAGE, pr
 import { API_STALL_MS, apiStall, claudeArgs, takeoverArgs, type LaunchSpec } from "../src/runner.ts";
 import { parsePermalink, pickSlackMessages, type UnreadRich } from "../src/slack.ts";
 import { ENGINE_DENY, manualTaskPrompt, needsConnectors, RETRY_LATER_MS, sessionFor, settle, systemPrompt, toolSetFor } from "../src/handle.ts";
-import { addManualTask, continueInClaude, processNow, recentlyDeletedDrafts, slackPeople } from "../src/queries.ts";
+import { addManualTask, cancel, continueInClaude, mute, processNow, recentlyDeletedDrafts, slackPeople, taskDetail, unmute } from "../src/queries.ts";
 import { approvalLine } from "../src/notify.ts";
 import { setLang } from "../src/i18n.ts";
 import { Database } from "bun:sqlite";
@@ -1005,5 +1005,68 @@ describe("facts looked up before a run", () => {
       .toBe("- PR a/b#1「fix」：作者 bob；已合并；review 状态：已通过；使用者已经 approve 过。");
     expect(prLine(ref, { ...pr, author: { login: "me" }, isDraft: true, reviewDecision: "" }, "me")).toBe("- PR a/b#1「fix」：作者 me（就是使用者自己）；开着，草稿；review 状态：没有要求。");
     expect(prLine(ref, pr, null)).toBe("- PR a/b#1「fix」：作者 bob；开着；review 状态：还要 review。");
+  });
+});
+
+describe("a muted thread", () => {
+  const addEvent = (db: ReturnType<typeof openDb>, e: Partial<EventRow>) =>
+    db.prepare(`INSERT INTO events (source, kind, dedupe_key, channel, ts, thread_ts, user_id, user_name, text, received_at)
+      VALUES ('slack', ?, ?, ?, ?, ?, 'U1', 'Ann', ?, 0)`).run(e.kind ?? "mention", `k${Math.random()}`, e.channel ?? "C1", e.ts ?? "1.0", e.thread_ts ?? null, e.text ?? "<@ME> 看下");
+  const sec = (s: number) => (Date.now() / 1000 + s).toFixed(6);
+  const RULES = { thread: 0, dm: 0, skipUsers: [], skipChannels: [], workHours: null }; // no merge window at all
+  const only = (db: ReturnType<typeof openDb>) => db.prepare("SELECT * FROM tasks").all() as Array<{ id: string; status: string; outcome: string | null; muted_at: number | null; next_prompt: string | null }>;
+
+  test("keeps every later message in the thread with its task, never reopening it, however late and whatever its status", async () => {
+    const db = freshDb();
+    addEvent(db, { ts: "5.0" }); // an @ in a channel: replies go to its thread
+    intakeSlack(db, RULES);
+    const id = only(db)[0].id;
+    db.prepare("UPDATE tasks SET status = 'done', updated_at = 0").run();
+    mute(db, id);
+    addEvent(db, { ts: sec(0), thread_ts: "5.0", text: "<@ME> 还在吗" });
+    addEvent(db, { ts: sec(1), thread_ts: "5.0", text: "那我先合了" });
+    expect(intakeSlack(db, RULES)).toBe(0);
+    expect(only(db)).toMatchObject([{ id, status: "done", next_prompt: null }]);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM events WHERE task_id = ?").get(id) as { n: number }).n).toBe(3);
+
+    await cancel(db, id);
+    addEvent(db, { ts: sec(2), thread_ts: "5.0" });
+    expect(intakeSlack(db, RULES)).toBe(0);
+
+    addEvent(db, { ts: sec(3) }); // a new @ in the same channel is another conversation
+    expect(intakeSlack(db, RULES)).toBe(1);
+  });
+
+  test("muting stops work in progress but keeps reply cards waiting; unmuting lets the next message in", () => {
+    const db = freshDb();
+    addEvent(db, { kind: "dm", channel: "D1", ts: sec(0), thread_ts: "4.0" }); // a thread in a DM
+    intakeSlack(db, RULES);
+    const id = only(db)[0].id;
+    mute(db, id);
+    expect(only(db)[0]).toMatchObject({ status: "closed", outcome: "muted" });
+
+    const db2 = freshDb();
+    addEvent(db2, { ts: "5.0" });
+    intakeSlack(db2, RULES);
+    const id2 = only(db2)[0].id;
+    db2.prepare("UPDATE tasks SET status = 'needs_approval'").run();
+    db2.prepare("INSERT INTO approvals (id, task_id, kind, key, status, payload, created_at) VALUES ('a1', ?, 'outbound', 'k1', 'pending', '{}', 0)").run(id2);
+    mute(db2, id2);
+    expect(only(db2)[0].status).toBe("needs_approval");
+    expect(db2.prepare("SELECT status FROM approvals").get()).toEqual({ status: "pending" });
+
+    unmute(db2, id2);
+    db2.prepare("UPDATE tasks SET status = 'done'").run();
+    addEvent(db2, { ts: sec(1), thread_ts: "5.0", text: "合了吗" });
+    intakeSlack(db2, { ...RULES, thread: null });
+    expect(only(db2)[0]).toMatchObject({ status: "queued", muted_at: null });
+  });
+
+  test("only a thread can be muted: a DM outside threads would mute the person", () => {
+    const db = freshDb();
+    addEvent(db, { kind: "dm", channel: "D1", ts: sec(0) });
+    intakeSlack(db, RULES);
+    expect(() => mute(db, only(db)[0].id)).toThrow();
+    expect(taskDetail(db, only(db)[0].id)!.task.thread).toBe(false);
   });
 });

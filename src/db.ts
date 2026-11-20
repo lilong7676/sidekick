@@ -53,6 +53,8 @@ export interface TaskRow {
   not_before: number | null;
   /** The tools its session was given (handle.ts ToolSet); null: a session from before tool sets, given everything. */
   tool_set: string | null;
+  /** When I muted its thread (queries.ts mute): new messages there are kept with it, never worked on. */
+  muted_at: number | null;
 }
 
 export interface RunRow {
@@ -129,7 +131,8 @@ export function openDb(stateDir: string): Database {
       notified_status TEXT,
       handed_off_at INTEGER,
       not_before  INTEGER,
-      tool_set    TEXT
+      tool_set    TEXT,
+      muted_at    INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, updated_at);
 
@@ -170,7 +173,7 @@ export function openDb(stateDir: string): Database {
   `);
   // Columns added after the first release: CREATE TABLE IF NOT EXISTS leaves an older ledger without them.
   const taskColumns = (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).map((c) => c.name);
-  for (const col of ["handed_off_at", "not_before"]) {
+  for (const col of ["handed_off_at", "not_before", "muted_at"]) {
     if (!taskColumns.includes(col)) db.exec(`ALTER TABLE tasks ADD COLUMN ${col} INTEGER`);
   }
   if (!taskColumns.includes("tool_set")) db.exec("ALTER TABLE tasks ADD COLUMN tool_set TEXT");

@@ -405,6 +405,7 @@ claude -p "<prompt>"
 - 提效第二轮（2026-11-19，会话 47b9cf72，借鉴 DeepSeek 的 Super-agent 文章：规则判断得了的不交给模型，模型要查的事实先查好放进上下文）：
   - 运行前查好的事实（`facts.ts`）：发消息的人在不在 profile 的 `autoReply` 里提到的 Slack 用户组里（缓存一小时），消息里 GitHub PR 的状态、作者、review 状态、使用者 review 过没有（`gh pr view`，最多 3 个），写在 prompt 末尾。原来每个 PR 请求要 agent 自己跑两次 `slackcli usergroups read` 和一次 `gh pr view`。查不到的不写，agent 照旧自己查。
   - 收尾话开头的新对话直接按规则跳过（`intake.ts`）：60 个对话里有 3 个是「欧克」「:+1:」「好了」，agent 都判了不用回，共花 $5.4。只有一个 @、没有别的字不算收尾：那是请我看 thread。
+- 忽略一个 thread（2026-11-20，使用者提出，会话 47b9cf72）：任务详情里「忽略这个 thread」。之后那个 thread 的新消息照样记在这个任务下，但不重开、不跑、不通知，不受合并时长限制，任务取消了也一样（`tasks.muted_at`，`intake.ts`）；「恢复处理」后只管之后的消息。点的时候正在跑或排队的停下，已有的回复卡片留着。只给 thread（thread 里的消息、频道里 @ 我的消息）：私信不在 thread 里时，忽略对话等于忽略这个人，那用跳过规则。原来只能「取消任务」，下一条消息又会建新任务。
 - 还没做：
   - 公司包的 PR（见上一条）。
   - 开发者签名：没有签名，「登录项」里显示的是 sidekick 这个可执行文件而不是 Sidekick.app。有了 Developer ID 和公证才能回到 SMAppService，Gatekeeper 也不用担心。

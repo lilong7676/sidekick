@@ -135,6 +135,10 @@ export interface Task {
   created_at: number; updated_at: number; cost_usd?: number; pending_approvals?: number; messages?: number; link: string | null;
   /** Held until working hours (src/intake.ts). */
   not_before?: number | null;
+  /** Its thread is muted: new messages there are kept, not worked on (src/queries.ts mute). */
+  muted_at?: number | null;
+  /** In the task view only: its conversation is a Slack thread, so it can be muted. */
+  thread?: boolean;
 }
 
 export interface Approval {

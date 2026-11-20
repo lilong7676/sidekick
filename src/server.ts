@@ -16,7 +16,7 @@ import type { AutoDoctor, DoctorReport } from "./doctor.ts";
 import { MAX_PERSONA_CHARS, PERSONA_TEMPLATE, PersonaConflict, readPersona, refinePrompt, writePersona } from "./persona.ts";
 import type { SlackStatus } from "./realtime.ts";
 import { trialSamples, type Trials } from "./trial.ts";
-import { addManualTask, cancel, clearFinished, continueInClaude, deleteTask, processNow, slackPeople, fingerprint, handback, listTasks, parseLogLine, pendingApprovals, readRunLog, recentlyDeletedDrafts, stateSummary, takeover, taskDetail, type TaskFilter } from "./queries.ts";
+import { addManualTask, cancel, clearFinished, continueInClaude, deleteTask, mute, processNow, unmute, slackPeople, fingerprint, handback, listTasks, parseLogLine, pendingApprovals, readRunLog, recentlyDeletedDrafts, stateSummary, takeover, taskDetail, type TaskFilter } from "./queries.ts";
 import { EFFORTS, loadSettings, MODELS, readEngineConfig, updateSettings } from "./settings.ts";
 import { SUGGESTED_ROOT, useWorkspace } from "./setup.ts";
 import type { SlackLogin } from "./slacklogin.ts";
@@ -274,6 +274,8 @@ export function startServer(deps: ServerDeps): Served {
       }),
     },
     "/api/tasks/:id/process": { POST: authed((req) => { processNow(db, idParam(req.params.id)); return json({ ok: true }); }) },
+    "/api/tasks/:id/mute": { POST: authed((req) => { mute(db, idParam(req.params.id)); return json({ ok: true }); }) },
+    "/api/tasks/:id/unmute": { POST: authed((req) => { unmute(db, idParam(req.params.id)); return json({ ok: true }); }) },
     "/api/tasks/:id/continue": {
       POST: authed(async (req) => json(await continueInClaude(profile, db, idParam(req.params.id), loadSettings(deps.settingsFile).continueIn))),
     },

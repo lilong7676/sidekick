@@ -76,7 +76,7 @@ export function taskDetail(db: Database, id: string) {
   const task = getTask(db, id);
   if (!task) return null;
   return {
-    task: { ...task, link: linkFor(db, task) },
+    task: { ...task, link: linkFor(db, task), thread: inThread(db, task) },
     events: db.prepare("SELECT * FROM events WHERE task_id = ? ORDER BY id").all(id) as EventRow[],
     runs: db.prepare("SELECT * FROM runs WHERE task_id = ? ORDER BY started_at").all(id) as RunRow[],
     approvals: (db.prepare("SELECT * FROM approvals WHERE task_id = ? ORDER BY created_at").all(id) as ApprovalRow[]).map((a) => approvalView(db, a)),
@@ -278,6 +278,39 @@ export function processNow(db: Database, id: string): void {
   } else {
     throw new Error(t("这个任务没有在等规则放行", "This task is not waiting on a rule"));
   }
+}
+
+/**
+ * Whether a task's conversation is a Slack thread: a message in one, or an @ in a channel (replies to
+ * it go into its thread). Only a thread can be muted: muting a DM outside threads would mute the person.
+ */
+function inThread(db: Database, task: TaskRow): boolean {
+  if (!task.event_id) return false;
+  const ev = db.prepare("SELECT source, kind, thread_ts FROM events WHERE id = ?").get(task.event_id) as Pick<EventRow, "source" | "kind" | "thread_ts"> | null;
+  return ev?.source === "slack" && (ev.thread_ts !== null || ev.kind === "mention");
+}
+
+/**
+ * Mute a task's thread: from now on its new messages stay with this task and are never worked on,
+ * however long after (intake.ts), until unmute. Work in progress stops; reply cards already waiting
+ * stay, to send or drop.
+ */
+export function mute(db: Database, id: string): void {
+  const task = getTask(db, id);
+  if (!task) throw new Error(t("没有这个任务", "No such task"));
+  if (!inThread(db, task)) throw new Error(t("只有 thread 里的任务能忽略", "Only a task in a thread can be muted"));
+  if (task.status === "queued" || task.status === "running") {
+    // Status first, so the run's exit handler (handle.ts settle) leaves the task alone.
+    setTaskStatus(db, id, "closed", { next_prompt: null, not_before: null, ...(task.summary ? {} : { outcome: "muted", summary: t("忽略了这个 thread，没有处理。", "Thread muted before it was handled.") }) });
+    killLiveRuns(db, id);
+  }
+  db.prepare("UPDATE tasks SET muted_at = ?, updated_at = ? WHERE id = ?").run(Date.now(), Date.now(), id);
+}
+
+/** Work on the thread's new messages again. Those that came while it was muted stay as they are. */
+export function unmute(db: Database, id: string): void {
+  if (!getTask(db, id)) throw new Error(t("没有这个任务", "No such task"));
+  db.prepare("UPDATE tasks SET muted_at = NULL, updated_at = ? WHERE id = ?").run(Date.now(), id);
 }
 
 /** What 「在 Claude 里继续」 opened, or the command to run by hand where it cannot open anything. */

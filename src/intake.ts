@@ -96,27 +96,30 @@ const OPEN = ["queued", "running"];
 /** Settled, but the conversation may go on: a new message joins within the window and reopens it. */
 const SETTLED = ["needs_approval", "needs_me", "done", "closed"];
 // cancelled and failed take no new messages: I called it off, or it broke; the next one starts clean.
+// A muted thread is the exception: its task takes every new message there, whatever its status.
 
 /**
  * The task a new event continues, if any: the latest task of the same thread (or of the same 1:1 DM,
- * outside threads), when it is still at work, or settled less than the window ago. Joining keeps the
- * conversation in one task and one Claude session: the agent remembers what it looked up and drafted.
+ * outside threads), when it is still at work, or settled less than the window ago, or its thread is
+ * muted. Joining keeps the conversation in one task and one Claude session: the agent remembers what
+ * it looked up and drafted.
  */
 export function findJoinableTask(db: Database, ev: EventRow, windows: MergeWindows): string | null {
-  type Latest = { id: string; status: string; updated_at: number } | null;
+  type Latest = { id: string; status: string; updated_at: number; muted_at: number | null } | null;
   let latest: Latest = null;
   if (ev.thread_ts) {
     latest = db.prepare(`
-      SELECT t.id, t.status, t.updated_at FROM tasks t JOIN events e ON e.task_id = t.id
+      SELECT t.id, t.status, t.updated_at, t.muted_at FROM tasks t JOIN events e ON e.task_id = t.id
       WHERE e.channel = ? AND (e.thread_ts = ? OR e.ts = ?)
       ORDER BY t.updated_at DESC LIMIT 1`).get(ev.channel, ev.thread_ts, ev.thread_ts) as Latest;
   } else if (ev.kind === "dm") {
     latest = db.prepare(`
-      SELECT t.id, t.status, t.updated_at FROM tasks t JOIN events e ON e.task_id = t.id
+      SELECT t.id, t.status, t.updated_at, t.muted_at FROM tasks t JOIN events e ON e.task_id = t.id
       WHERE e.channel = ? AND e.thread_ts IS NULL
       ORDER BY t.updated_at DESC LIMIT 1`).get(ev.channel) as Latest;
   }
   if (!latest) return null;
+  if (latest.muted_at !== null && ev.thread_ts) return latest.id;
   if (OPEN.includes(latest.status)) return latest.id;
   if (!SETTLED.includes(latest.status)) return null;
   const hours = ev.thread_ts ? windows.thread : windows.dm;
@@ -156,6 +159,11 @@ export function intakeSlack(db: Database, rules: IntakeRules = rulesFromSettings
  */
 function followUp(db: Database, taskId: string, ev: EventRow, hold: number | null): void {
   const task = getTask(db, taskId)!;
+  if (task.muted_at !== null) {
+    db.prepare("UPDATE events SET task_id = ? WHERE id = ?").run(taskId, ev.id);
+    log(`intake: ${taskId} thread muted, message kept, not worked on`);
+    return;
+  }
   if (!OPEN.includes(task.status) && isClosing(ev.text)) {
     db.prepare("UPDATE events SET task_id = ? WHERE id = ?").run(taskId, ev.id);
     log(`intake: ${taskId} closing message kept, not worked on`);

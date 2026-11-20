@@ -65,6 +65,8 @@ When a new version is out, the panel shows "New version x" at the top. Click it,
 
 Left-click ✨ for the panel; right-click for a separate window, restarting the daemon, and launch at login. Pending approvals show up as notifications you can approve or deny right there. The draft also waits in Slack's message box: send it from Slack, edited or not, or delete it, and the card in sidekick closes on its own.
 
+A busy thread you are done with: open its task and click "Mute thread". New messages there are still recorded with the task but never handled, until you unmute it.
+
 Slack is polled every 5 minutes. Realtime mode (Settings → Slack) handles new messages within seconds over Slack web's own websocket, and falls back to polling when that misbehaves.
 
 ### Settings
